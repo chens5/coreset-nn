@@ -1,4 +1,3 @@
-from typing import Callable
 import functools as ft
 import itertools as it # pyright: ignore
 from inspect import signature
@@ -35,7 +34,7 @@ class Repeat(nn.Sequential):
     This is for convenience, when an architecture reads like
     " block defined above × 5"
     """
-    def __init__(self, n:int , module_factory: Callable[[], nn.Module]):
+    def __init__(self, n, module_factory):
         super().__init__(*[module_factory() for _ in range(n)])
 
 class Split(nn.Module):
@@ -79,11 +78,3 @@ class Sequential(nn.Module):
                 case x, _:
                     output = module(x)
         return output
-
-class Concat(nn.Module):
-    def __init__(self, dim=-1):
-        super().__init__()
-        self.dim = dim
-
-    def forward(self, *inputs):
-        return torch.cat(inputs, dim=self.dim)

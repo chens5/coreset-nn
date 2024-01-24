@@ -1,0 +1,7 @@
+dataset_name: uniform-50
+datafile: 50_uniform_points.npy
+epochs: 100
+configs: model-configs/change-output-dim.yml
+device: cuda:0
+batch_size: 128
+layer_type: ConvexHullNN

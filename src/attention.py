@@ -76,7 +76,7 @@ class MultiheadAttention(nn.Module):
 
 class TransformerBlock(nn.Sequential):
     
-    def __init__(self, input_dim, embed_dim=250, feed_forward_depth=1, activation=nn.LeakyReLU):
+    def __init__(self, input_dim, embed_dim=250, activation=nn.LeakyReLU):
         super().__init__()
         
         self.add_module("attention", ResidualShortcut(
@@ -87,7 +87,7 @@ class TransformerBlock(nn.Sequential):
         
         self.add_module("feed_forward", ResidualShortcut(
             
-            MLP(input_dim, *[embed_dim] * feed_forward_depth, input_dim, batchnorm=False, 
+            MLP(input_dim, embed_dim, input_dim, batchnorm=False, 
                 activation=activation)
             ))
         

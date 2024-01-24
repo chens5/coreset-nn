@@ -1,0 +1,6 @@
+test-chull:
+  input_dim: 2
+  embedding_dim: 16
+  hidden_dim: 32
+  output_dim: 20
+  depth: 2

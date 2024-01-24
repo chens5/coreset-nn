@@ -1,0 +1,36 @@
+depth-2-ed-16-hd-128-od-16:
+  depth: 3
+  embedding_dim: 16
+  hidden_dim: 128
+  input_dim: 2
+  output_dim: 16
+depth-2-ed-16-hd-128-od-32:
+  depth: 3
+  embedding_dim: 16
+  hidden_dim: 128
+  input_dim: 2
+  output_dim: 32
+depth-2-ed-16-hd-128-od-48:
+  depth: 3
+  embedding_dim: 16
+  hidden_dim: 128
+  input_dim: 2
+  output_dim: 48
+depth-2-ed-16-hd-128-od-64:
+  depth: 3
+  embedding_dim: 16
+  hidden_dim: 128
+  input_dim: 2
+  output_dim: 64
+depth-2-ed-16-hd-128-od-80:
+  depth: 3
+  embedding_dim: 16
+  hidden_dim: 128
+  input_dim: 2
+  output_dim: 80
+depth-2-ed-16-hd-128-od-96:
+  depth: 3
+  embedding_dim: 16
+  hidden_dim: 128
+  input_dim: 2
+  output_dim: 96
