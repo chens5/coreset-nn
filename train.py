@@ -1,3 +1,4 @@
+from ctypes.wintypes import MAX_PATH
 from src.sumformer import * 
 from src.transformer import *
 from src.dataset import *
@@ -7,6 +8,7 @@ from torch.optim import Adam
 
 from torch.nn import CrossEntropyLoss, NLLLoss
 from torch.utils.data import DataLoader
+from geotorch.sphere import uniform_init_sphere_ as unif_sphere
 
 import argparse
 import os
@@ -20,7 +22,8 @@ import geomloss
 from torch.utils.tensorboard.writer import SummaryWriter
 
 
-output_dir = '/data/sam/coreset/'
+output_dir = '/data/riley/coreset/'
+input_dir = '/data/sam/coreset/'
 
 cross_entropy_loss = CrossEntropyLoss()
 sinkhorn_loss = geomloss.SamplesLoss(loss='sinkhorn')
@@ -77,10 +80,17 @@ def format_log_dir(output_dir,
 
 # TODO: Given P and an approximate Q and n directions, we should compute
 # \sum_{i = 1}^n abs(max_p <u_i, p> - max_q <u_i, q>) + \sum_i^n abs(min_p <u_i, q> - min_q <u_i, q>)
-def direction_loss(P, Q, n, in_dim=3):
-    directions = torch.rand((n, in_dim), dtype=torch.float)
-    
-    return 0
+def direction_loss(P, Q, n= 100, in_dim=3, device = 'cuda:0'):
+    loss = torch.zeros(1).to(device)
+    directions = unif_sphere(torch.zeros(n,in_dim))
+    directions  = directions.to(device)
+    for d in directions:
+        max_q = torch.max(Q @ d)
+        min_q = torch.min(Q @ d)
+        max_p = torch.max(P @ d)
+        min_p = torch.min(P @ d)
+        loss+= torch.abs(max_q -  max_p) + torch.abs(min_q -  min_p)
+    return loss
 
 # TODO: Cross entropy loss for n directions
 def cross_entropy_loss():
@@ -88,7 +98,7 @@ def cross_entropy_loss():
 
 def compute_test_error(model, test_dataloader, test_gt, test_sz, device='cuda:0'):
     count = 0
-    loss = 0.0
+    loss = torch.zeros(1).to(device)
     for batch in test_dataloader:
         batch = batch.to(device)
         out = F.softmax(model(batch), dim=1)
@@ -97,7 +107,7 @@ def compute_test_error(model, test_dataloader, test_gt, test_sz, device='cuda:0'
 
         for i in range(len(gt_p_batch)):
             ground_truth = gt_p_batch[i].to(device)
-            loss += sinkhorn_loss(hulls[i], ground_truth).detach()
+            loss += direction_loss(hulls[i], ground_truth).detach()
         count += 1
     loss = loss/test_sz
     return loss
@@ -139,7 +149,7 @@ def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_g
             loss = 0.0
             for i in range(len(gt_p_batch)):
                 ground_truth = gt_p_batch[i].to(device)
-                loss += sinkhorn_loss(hulls[i], ground_truth)
+                loss += direction_loss(hulls[i], ground_truth)
             total_loss += loss.detach()
             loss.backward()
             optimizer.step()
@@ -190,7 +200,7 @@ def main():
         log_dir = format_log_dir(output_dir, 
                                 args.dataset_name, 
                                 modelname, 
-                                'sinkhorn', 
+                                'direction', 
                                 args.layer_type,
                                 args.trial)
         config=model_configs[modelname]
