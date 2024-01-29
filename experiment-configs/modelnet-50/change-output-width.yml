@@ -1,4 +1,4 @@
-dataset_name: modelnet-50
+dataset_name: modelnet-50_direction_loss
 datafile: 50_mnet.npy
 epochs: 100
 configs: model-configs/change-output-dim-1-in-dim-3.yml
