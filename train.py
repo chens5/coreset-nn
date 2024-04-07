@@ -80,17 +80,60 @@ def format_log_dir(output_dir,
 
 # TODO: Given P and an approximate Q and n directions, we should compute
 # \sum_{i = 1}^n abs(max_p <u_i, p> - max_q <u_i, q>) + \sum_i^n abs(min_p <u_i, q> - min_q <u_i, q>)
-def direction_loss(P, Q, n= 100, in_dim=3, device = 'cuda:0'):
-    loss = torch.zeros(1).to(device)
+def direction_loss(p, q, n=100, in_dim=3, device='cuda:0'):
     directions = unif_sphere(torch.zeros(n,in_dim))
-    directions  = directions.to(device)
-    for d in directions:
-        max_q = torch.max(Q @ d)
-        min_q = torch.min(Q @ d)
-        max_p = torch.max(P @ d)
-        min_p = torch.min(P @ d)
-        loss+= torch.abs(max_q -  max_p) + torch.abs(min_q -  min_p)
-    return loss
+    directions = directions.t().to(device)
+    p, q = p.to(device), q.to(device)
+    
+    if (p.batch1 != q.batch1).all():
+        #check: is this the desired behavior??
+        raise ValueError('Sizes of point sets differ between batches')
+    
+    
+    changes = batch.batch1[:-1] != batch.batch1[1:]
+    idx_change = (torch.nonzero(changes) + 1).squeeze()
+
+    idx_change = torch.cat((idx_change, torch.tensor([len(p.data)])))
+    lengths = idx_change - torch.cat((torch.tensor([0]), idx_change[:-1]))
+
+    p_slices = torch.split(p.data, lengths.tolist())
+    q_slices = torch.split(q.data, lengths.tolist())
+
+
+    # projections for each point set
+    
+#     p_batch = torch.stack(p_slices) #only works if all point sets same size
+#     q_batch = torch.stack(q_slices) #only works if all point sets same size
+
+#     projections_q = torch.matmul(q_batch, directions)
+#     projections_p = torch.matmul(p_batch, directions)
+
+#     max_q = torch.max(projections_q, dim=1)[0]  
+#     min_q = torch.min(projections_q, dim=1)[0]  
+#     max_p = torch.max(projections_p, dim=1)[0]
+#     min_p = torch.min(projections_p, dim=1)[0]
+
+    
+#     diff_max = torch.abs(max_q - max_p)
+#     diff_min = torch.abs(min_q - min_p)
+
+#     losses = torch.sum(diff_max + diff_min, dim=1)
+
+    
+    losses = []
+    
+    for i in range(len(p_slices)):
+        projections_q = (q_slices[i] @ directions).unsqueeze(dim=0)
+        projections_p = (p_slices[i] @ directions).unsqueeze(dim=0)
+
+        max_q = torch.max(projections_q, dim=1)[0]
+        min_q = torch.min(projections_q, dim=1)[0]
+        max_p = torch.max(projections_p, dim=1)[0]
+        min_p = torch.min(projections_p, dim=1)[0]
+   
+        losses.append(torch.sum(abs(max_q - max_p) + abs(min_q - min_p)))
+    
+    return np.mean(losses)
 
 # TODO: Cross entropy loss for n directions
 def cross_entropy_loss():
