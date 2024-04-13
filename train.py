@@ -189,10 +189,8 @@ def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_g
             hulls = get_approx_chull(out, batch)
             gt_p_batch = train_gt[count]
 
-            loss = 0.0
-            for i in range(len(gt_p_batch)):
-                ground_truth = gt_p_batch[i].to(device)
-                loss += direction_loss(hulls[i], ground_truth)
+            loss = direction_loss(hulls, gt_p_batch)
+            
             total_loss += loss.detach()
             loss.backward()
             optimizer.step()
