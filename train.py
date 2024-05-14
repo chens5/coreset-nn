@@ -22,8 +22,8 @@ import geomloss
 from torch.utils.tensorboard.writer import SummaryWriter
 
 
-output_dir = '/data/riley/coreset/'
-input_dir = '/data/sam/coreset/'
+output_dir = '/data/oren/coreset/'
+input_dir = '/data/oren/coreset/'
 
 cross_entropy_loss = CrossEntropyLoss()
 sinkhorn_loss = geomloss.SamplesLoss(loss='sinkhorn')
@@ -38,7 +38,9 @@ def npz_to_batches(raw_data, batch_size=128):
 
     for i in range(raw_data.shape[0]):
         ptset = raw_data[i][:, :-1]
+       
         cvx_hull_idx = np.where(raw_data[i][:, -1] == 1.0)
+
         in_batch.append(torch.tensor(ptset, dtype=torch.float))
         in_batch_gt.append(torch.tensor(ptset[cvx_hull_idx], dtype=torch.float))
         if (count != 0 and count % (batch_size-1) == 0) or i == raw_data.shape[0] - 1:
@@ -48,6 +50,7 @@ def npz_to_batches(raw_data, batch_size=128):
             in_batch = []
             in_batch_gt = []
         count += 1
+
     return batch_list, gt_list
 
 def get_approx_chull(probabilities, batch):
@@ -80,60 +83,43 @@ def format_log_dir(output_dir,
 
 # TODO: Given P and an approximate Q and n directions, we should compute
 # \sum_{i = 1}^n abs(max_p <u_i, p> - max_q <u_i, q>) + \sum_i^n abs(min_p <u_i, q> - min_q <u_i, q>)
-def direction_loss(p, q, n=100, in_dim=3, device='cuda:0'):
-    directions = unif_sphere(torch.zeros(n,in_dim))
+def direction_loss(p, q, directions, n=100, in_dim=3, device='cuda:0'):
+    # directions = unif_sphere(torch.zeros(n,in_dim))
     directions = directions.t().to(device)
     p, q = p.to(device), q.to(device)
-    
-    if (p.batch1 != q.batch1).all():
-        #check: is this the desired behavior??
-        raise ValueError('Sizes of point sets differ between batches')
-    
-    
-    changes = batch.batch1[:-1] != batch.batch1[1:]
-    idx_change = (torch.nonzero(changes) + 1).squeeze()
-
-    idx_change = torch.cat((idx_change, torch.tensor([len(p.data)])))
-    lengths = idx_change - torch.cat((torch.tensor([0]), idx_change[:-1]))
-
-    p_slices = torch.split(p.data, lengths.tolist())
-    q_slices = torch.split(q.data, lengths.tolist())
-
-
-    # projections for each point set
-    
-    p_batch = torch.stack(p_slices) #only works if all point sets same size
-    q_batch = torch.stack(q_slices) #only works if all point sets same size
-
-    projections_q = torch.matmul(q_batch, directions)
-    projections_p = torch.matmul(p_batch, directions)
-
-    max_q = torch.max(projections_q, dim=1)[0]  
-    min_q = torch.min(projections_q, dim=1)[0]  
-    max_p = torch.max(projections_p, dim=1)[0]
-    min_p = torch.min(projections_p, dim=1)[0]
 
     
-    diff_max = torch.abs(max_q - max_p)
-    diff_min = torch.abs(min_q - min_p)
+    changes_p = p.batch1[:-1] != p.batch1[1:]
+    changes_q = q.batch1[:-1] != q.batch1[1:]
+    idx_change_p = (torch.nonzero(changes_p) + 1).squeeze().cpu()
+    idx_change_q = (torch.nonzero(changes_q) + 1).squeeze().cpu()
 
-    losses = torch.sum(diff_max + diff_min, dim=1)
+    idx_change_p = torch.cat((idx_change_p, torch.tensor([len(p.data)])))
+    idx_change_q = torch.cat((idx_change_q, torch.tensor([len(q.data)])))
 
+    lengths_p = idx_change_p - torch.cat((torch.tensor([0]), idx_change_p[:-1]))
+    lengths_q = idx_change_q - torch.cat((torch.tensor([0]), idx_change_q[:-1]))
+
+
+    p_slices = torch.split(p.data, lengths_p.tolist())
+    q_slices = torch.split(q.data, lengths_q.tolist())
+
+
+    losses = []
     
-#     losses = []
-    
-#     for i in range(len(p_slices)):
-#         projections_q = (q_slices[i] @ directions).unsqueeze(dim=0)
-#         projections_p = (p_slices[i] @ directions).unsqueeze(dim=0)
+    for i in range(len(p_slices)):
+        projections_q = (q_slices[i] @ directions).unsqueeze(dim=0)
+        projections_p = (p_slices[i] @ directions).unsqueeze(dim=0)
 
-#         max_q = torch.max(projections_q, dim=1)[0]
-#         min_q = torch.min(projections_q, dim=1)[0]
-#         max_p = torch.max(projections_p, dim=1)[0]
-#         min_p = torch.min(projections_p, dim=1)[0]
+        max_q = torch.max(projections_q, dim=1)[0]
+        min_q = torch.min(projections_q, dim=1)[0]
+        max_p = torch.max(projections_p, dim=1)[0]
+        min_p = torch.min(projections_p, dim=1)[0]
    
-#         losses.append(torch.sum(abs(max_q - max_p) + abs(min_q - min_p)))
+        losses.append(torch.sum(abs(max_q - max_p) + abs(min_q - min_p)))
     
-    return losses.mean()
+
+    return torch.mean(torch.stack(losses))
 
 # TODO: Cross entropy loss for n directions
 def cross_entropy_loss():
@@ -142,15 +128,15 @@ def cross_entropy_loss():
 def compute_test_error(model, test_dataloader, test_gt, test_sz, device='cuda:0'):
     count = 0
     loss = torch.zeros(1).to(device)
+    directions = unif_sphere(torch.zeros(50, 2)) #hardcoding size of point set and in_dim
     for batch in test_dataloader:
         batch = batch.to(device)
         out = F.softmax(model(batch), dim=1)
-        hulls = get_approx_chull(out, batch)
-        gt_p_batch = test_gt[count]
+        hulls = Batch.from_list(get_approx_chull(out, batch), order = 1)
+        gt_p_batch = Batch.from_list(test_gt[count], order = 1)
+        # ground_truth = gt_p_batch[i].to(device)
 
-        for i in range(len(gt_p_batch)):
-            ground_truth = gt_p_batch[i].to(device)
-            loss += direction_loss(hulls[i], ground_truth).detach()
+        loss += direction_loss(hulls, gt_p_batch, directions, in_dim = 2, device = device).detach()
         count += 1
     loss = loss/test_sz
     return loss
@@ -182,26 +168,41 @@ def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_g
     for epoch in trange(epochs):
         count = 0
         total_loss = 0.0
+        directions = unif_sphere(torch.zeros(50, 2)) #hardcoding size of point set and in_dim
         for batch in train_dataloader:
+
             optimizer.zero_grad()
             batch = batch.to(device)
             out = F.softmax(model(batch), dim=1)
-            hulls = get_approx_chull(out, batch)
-            gt_p_batch = train_gt[count]
-
-            loss = direction_loss(hulls, gt_p_batch)
+            hulls = Batch.from_list(get_approx_chull(out, batch), order = 1)
+            gt_p_batch = Batch.from_list(train_gt[count], order = 1)
+            
+            loss = direction_loss(hulls, gt_p_batch, directions, n=50, in_dim=2, device = device) #hardcoding in_dim -- change later
             
             total_loss += loss.detach()
             loss.backward()
             optimizer.step()
             count +=1
+
+        #saving output
+        if epoch == epochs - 1:
+            hulls = [tensor.cpu().detach().numpy() for tensor in get_approx_chull(out, batch)]
+            
+            model_output_dir = os.path.join(log_dir, 'output')
+            if not os.path.exists(model_output_dir):
+                os.makedirs(model_output_dir)
+            np.save(os.path.join(model_output_dir, 'chull_test'), np.array(hulls))
+            print('output saved')
+            hulls = [torch.tensor(arr) for arr in hulls]
+            hulls = Batch.from_list(hulls, order = 1) #casting back to batch
+
         # compute test error
         writer.add_scalar('train/mse_loss', total_loss/count, epoch)
         if epoch % save_freq == 0:
             path = os.path.join(record_dir, f'model_{epoch}.pt')
             torch.save(model.state_dict(), path)
     
-    test_err = compute_test_error(model, test_dataloader, test_gt, 300)
+    test_err = compute_test_error(model, test_dataloader, test_gt, 300, device = device)
     print("test error:", test_err)
     path = os.path.join(log_dir, 'final_model.pt')
     print("saving model to:", path)
@@ -231,6 +232,7 @@ def main():
     train_batches, train_gt = npz_to_batches(raw_data[:2700], args.batch_size)
     test_batches, test_gt = npz_to_batches(raw_data[2700:], args.batch_size)
 
+
     # Load model configs
     with open(args.configs, 'r') as file:
         model_configs = yaml.safe_load(file)
@@ -249,7 +251,7 @@ def main():
 
         output = train(args.layer_type, config, train_batches,train_gt, 
                        test_batches, test_gt, args.device, log_dir, 
-                       epochs=args.epochs)
+                       epochs=args.epochs, save_freq = 5) #added save_freq
         
         loss_data.append({'modelname':modelname, 'loss':output.item()})
 
@@ -259,16 +261,16 @@ def main():
     csv_file = os.path.join('output', 
                             args.dataset_name, 
                             args.layer_type,
-                            'sinkhorn',
+                            'direction',
                             args.trial)
     if not os.path.exists(csv_file):
         os.makedirs(csv_file)
     csv_file = csv_file + f'/{modeltype}.csv'
     csvfile = open(csv_file, 'w', newline='')
-    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-    writer.writeheader()
+    csvwriter = csv.DictWriter(csvfile, fieldnames=fieldnames)
+    csvwriter.writeheader()
     for row in loss_data:
-        writer.writerow(row)
+        csvwriter.writerow(row)
     csvfile.close()
     print(f'Data has been written to {csv_file}')
 
