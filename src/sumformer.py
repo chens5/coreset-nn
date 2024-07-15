@@ -129,10 +129,29 @@ class ConvexHullNN(nn.Module):
         super().__init__()
         self.initial = nn.Linear(in_features=input_dim, out_features=embedding_dim)
         self.sumformer = Sumformer(num_blocks=depth, input_dim = embedding_dim, hidden_dim=hidden_dim)
-        self.final = nn.Linear(in_features = embedding_dim, out_features=output_dim)
+        self.ff1 = nn.Linear(in_features = embedding_dim, out_features=output_dim) #old feedforward
+        
+       
+    def forward(self, x: Tensor|Batch):
+        out = self.initial(x)
+        out = self.sumformer(out)
+        out = self.ff1(out)
+       
+        return out
+
+
+class ConvexHullNN_new(nn.Module):
+    def __init__(self, input_dim, embedding_dim, hidden_dim, output_dim, depth, *args):
+        super().__init__()
+        self.initial = nn.Linear(in_features=input_dim, out_features=embedding_dim)
+        self.sumformer = Sumformer(num_blocks=depth, input_dim = embedding_dim, hidden_dim=hidden_dim)
+        
+        self.max_pool = nn.AdaptiveMaxPool1d(1)
+        self.ff2 = nn.Linear(in_features= 1, out_features= output_dim)
 
     def forward(self, x: Tensor|Batch):
         out = self.initial(x)
         out = self.sumformer(out)
-        out = self.final(out)
+        out = self.max_pool(out)
+        out = self.ff2(out)
         return out
