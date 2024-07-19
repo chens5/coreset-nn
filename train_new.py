@@ -60,9 +60,10 @@ def get_approx_chull(probabilities, batch):
     start = 0
     for num in batch.n_nodes:
         end = start + num
-        ptset = batch.data[start:end]
-        ptset_probs = probabilities.data[start:end]
-        hull_approx = torch.mm(ptset_probs.T, ptset)
+        # ptset = batch.data[start:end]
+        hull_approx = probabilities.data[start:end]
+        # hull_approx = torch.mm(ptset_probs.T, ptset)
+        print(hull_approx.shape)
         hulls.append(hull_approx)
         start = end
     return hulls
@@ -83,13 +84,6 @@ def format_log_dir(output_dir,
         os.makedirs(log_dir)
     return log_dir
 
-def centroid_distance(a, b):
-    centroid_a = torch.mean(a, axis=0)
-    distances = torch.norm(b - centroid_a, dim=1)
-    
-    return torch.mean(distances)
-
-
 # TODO: Given P and an approximate Q and n directions, we should compute
 # \sum_{i = 1}^n abs(max_p <u_i, p> - max_q <u_i, q>) + \sum_i^n abs(min_p <u_i, q> - min_q <u_i, q>)
 def direction_loss(p, q, directions, n=100, in_dim=3, device='cuda:0'):
@@ -106,9 +100,9 @@ def direction_loss(p, q, directions, n=100, in_dim=3, device='cuda:0'):
     idx_change_p = torch.cat((idx_change_p, torch.tensor([len(p.data)])))
     idx_change_q = torch.cat((idx_change_q, torch.tensor([len(q.data)])))
 
+
     lengths_p = idx_change_p - torch.cat((torch.tensor([0]), idx_change_p[:-1]))
     lengths_q = idx_change_q - torch.cat((torch.tensor([0]), idx_change_q[:-1]))
-
 
     p_slices = torch.split(p.data, lengths_p.tolist())
     q_slices = torch.split(q.data, lengths_q.tolist())
@@ -134,7 +128,7 @@ def direction_loss(p, q, directions, n=100, in_dim=3, device='cuda:0'):
     losses = torch.sum(diff_max + diff_min, dim=1)
 
 
-    return torch.mean(losses) #- centroid_distance(q.data, p.data)
+    return torch.mean(losses)
 
 # TODO: Cross entropy loss for n directions
 def cross_entropy_loss():
@@ -146,12 +140,13 @@ def compute_test_error(model, test_dataloader, test_gt, test_sz, device='cuda:0'
     directions = unif_sphere(torch.zeros(50, 2)) #hardcoding size of point set and in_dim
     for batch in test_dataloader:
         batch = batch.to(device)
-        out = F.softmax(model(batch), dim=0) #old model
-        hulls = Batch.from_list(get_approx_chull(out, batch), order = 1)
+        out = model(batch) #new model
+      
+        
         gt_p_batch = Batch.from_list(test_gt[count], order = 1)
         # ground_truth = gt_p_batch[i].to(device)
 
-        loss += direction_loss(hulls, batch, directions, in_dim = 2, device = device).detach()
+        loss += direction_loss(out, batch, directions, n=50, in_dim=2, device = device) #hardcoding in_dim -- change later
         count += 1
     loss = loss/test_sz
     return loss
@@ -165,8 +160,7 @@ def gen_model_output(model, train_dataloader, test_dataloader, log_dir, epoch, d
 
     for batch in train_dataloader:
         batch = batch.to(device)
-        out = F.softmax(model(batch), dim=0)
-        # out = model(batch) #new model
+        out = model(batch) #new model
 
         train_hulls += [tensor.cpu().detach().numpy() for tensor in get_approx_chull(out, batch)]
             
@@ -181,8 +175,7 @@ def gen_model_output(model, train_dataloader, test_dataloader, log_dir, epoch, d
 
     for batch in test_dataloader:
         batch = batch.to(device)
-        out = F.softmax(model(batch), dim=0)
-        # out = model(batch)
+        out = model(batch)
 
         test_hulls += [tensor.cpu().detach().numpy() for tensor in get_approx_chull(out, batch)]
             
@@ -221,7 +214,7 @@ def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_g
         total_loss = 0.0
         
         #generating directions -- hardcoding for 2d
-        angles = np.linspace(0, 2 * np.pi, 100, endpoint=False)
+        angles = np.linspace(0, 2 * np.pi, 50, endpoint=False)
         x = np.cos(angles)
         y = np.sin(angles)
 
@@ -234,11 +227,11 @@ def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_g
 
             optimizer.zero_grad()
             batch = batch.to(device)
-            out = F.softmax(model(batch), dim=0) #changed to dim=0
-            hulls = Batch.from_list(get_approx_chull(out, batch), order = 1)
+            out = model(batch) #new model
+            # hulls = Batch.from_list(get_approx_chull(out, batch), order = 1)
             gt_p_batch = Batch.from_list(train_gt[count], order = 1)
             
-            loss = direction_loss(hulls, batch, directions, n=50, in_dim=2, device = device) #hardcoding in_dim -- change later
+            loss = direction_loss(out, batch, directions, n=50, in_dim=2, device = device) #hardcoding in_dim -- change later
             
             total_loss += loss.detach()
             loss.backward()
@@ -253,7 +246,7 @@ def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_g
             torch.save(model.state_dict(), path)
 
             #saving output
-            # gen_model_output(model, train_dataloader, test_dataloader, log_dir, epoch, device)
+            gen_model_output(model, train_dataloader, test_dataloader, log_dir, epoch, device)
 
             # hulls = [tensor.cpu().detach().numpy() for tensor in get_approx_chull(out, batch)]
             # print(np.array(hulls))
