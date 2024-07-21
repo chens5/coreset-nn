@@ -11,7 +11,6 @@ from .basic import MLP
 from .combinators import ResidualShortcut, Repeat
 from torch_geometric.nn.aggr import Aggregation
 from torch_geometric.nn.resolver import aggregation_resolver
-
 from .data_representation import Batch
 
 
@@ -146,12 +145,32 @@ class ConvexHullNN_new(nn.Module):
         self.initial = nn.Linear(in_features=input_dim, out_features=embedding_dim)
         self.sumformer = Sumformer(num_blocks=depth, input_dim = embedding_dim, hidden_dim=hidden_dim)
         
-        self.max_pool = nn.AdaptiveMaxPool1d(1)
-        self.ff2 = nn.Linear(in_features= 1, out_features= output_dim)
+        self.max_pool = nn.AdaptiveMaxPool1d(output_size = 1)
+        self.mlp = nn.Sequential(
+            nn.Linear(input_dim, embedding_dim),
+            nn.ReLU(),
+            nn.Linear(embedding_dim, 2)
+        )
 
     def forward(self, x: Tensor|Batch):
         out = self.initial(x)
-        out = self.sumformer(out)
-        out = self.max_pool(out)
-        out = self.ff2(out)
+        out = self.sumformer(out) #shape: [50 * batch_size, 16]
+        out = out.unsqueeze(0)  # Shape: [1, 50 * batch_size, 16]
+        print(out.data.shape)
+        out = out.permute(0, 2, 1)
+        print(f'after perm: {out.data.shape}') 
+
+        
+        out = out.apply_max_pool1d(self.max_pool)
+        # out = self.max_pool(out)
+        print(out.data.shape) #should be: [1, 2 * output_dim, batch_size], but is [1, 2 * output_dim, 1]
+        out = out.squeeze(0)  # shape: [2 * output_dim, batch_size]
+
+
+        # out = out.squeeze(-1).view(-1, 2)  # Shape: [output_dim, 2]
+        
+        out = self.mlp(out)
+        print(f'output {out.data.shape}')
+
+       
         return out
