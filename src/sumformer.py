@@ -164,13 +164,12 @@ class ConvexHullNN_new(nn.Module):
         out = out.apply_max_pool1d(self.max_pool)
         # out = self.max_pool(out)
         print(out.data.shape) #should be: [1, 2 * output_dim, batch_size], but is [1, 2 * output_dim, 1]
-        out = out.squeeze(0)  # shape: [2 * output_dim, batch_size]
+        out = out.squeeze(0)  # shape: [2 * output_dim, 1]
 
 
-        # out = out.squeeze(-1).view(-1, 2)  # Shape: [output_dim, 2]
-        
+    
         out = self.mlp(out)
-        print(f'output {out.data.shape}')
+        print(f'output {out.data.shape}') 
 
        
         return out
