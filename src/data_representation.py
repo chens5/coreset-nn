@@ -296,9 +296,9 @@ class Batch:
         # Split and apply pooling
         for tensor in self.batch_split():
             print(tensor.shape)
-            pooled_tensor = max_pool(tensor)  # Apply max pooling
+            pooled_tensor = max_pool(tensor)
             print(pooled_tensor.shape)
-            pooled_data.append(pooled_tensor)  # Remove batch dimension
+            pooled_data.append(pooled_tensor)
 
         # Concatenate pooled data
         pooled_data = torch.cat(pooled_data, dim=0)
