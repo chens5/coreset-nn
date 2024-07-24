@@ -55,17 +55,19 @@ def npz_to_batches(raw_data, batch_size=128):
 
     return batch_list, gt_list
 
-def get_approx_chull(probabilities, batch):
+def get_approx_chull(output, od):
     hulls = []
     start = 0
-    for num in batch.n_nodes:
-        end = start + num
-        # ptset = batch.data[start:end]
-        hull_approx = probabilities.data[start:end]
-        # hull_approx = torch.mm(ptset_probs.T, ptset)
-        print(hull_approx.shape)
+    
+    while (start + 8) <= output.data.shape[0]:
+    # for num in output.n_nodes:
+        
+        end = start + od
+        hull_approx = output.data[start:end]
         hulls.append(hull_approx)
         start = end
+
+    print(len(hulls))
     return hulls
 
 def format_log_dir(output_dir, 
@@ -97,8 +99,11 @@ def direction_loss(p, q, directions, n=100, in_dim=3, device='cuda:0'):
     idx_change_p = (torch.nonzero(changes_p) + 1).squeeze().cpu()
     idx_change_q = (torch.nonzero(changes_q) + 1).squeeze().cpu()
 
+
     idx_change_p = torch.cat((idx_change_p, torch.tensor([len(p.data)])))
     idx_change_q = torch.cat((idx_change_q, torch.tensor([len(q.data)])))
+
+
 
 
     lengths_p = idx_change_p - torch.cat((torch.tensor([0]), idx_change_p[:-1]))
@@ -139,12 +144,16 @@ def compute_test_error(model, test_dataloader, test_gt, test_sz, device='cuda:0'
     loss = torch.zeros(1).to(device)
     directions = unif_sphere(torch.zeros(50, 2)) #hardcoding size of point set and in_dim
     for batch in test_dataloader:
+
         batch = batch.to(device)
         out = model(batch) #new model
+        batch_len = out.data.shape[0]
+
+        out = out.view(batch_len * 8, 2) #hardcoding for now: out.view(batch_size * output_dim, 2) 
+
+        # hulls = Batch.from_list(get_approx_chull(out, od=8), order = 1) #hardcoding output dim
       
         
-        gt_p_batch = Batch.from_list(test_gt[count], order = 1)
-        # ground_truth = gt_p_batch[i].to(device)
 
         loss += direction_loss(out, batch, directions, n=50, in_dim=2, device = device) #hardcoding in_dim -- change later
         count += 1
@@ -225,12 +234,15 @@ def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_g
 
         for batch in train_dataloader:
 
+
             optimizer.zero_grad()
             batch = batch.to(device)
-            out = model(batch) #new model
-            # hulls = Batch.from_list(get_approx_chull(out, batch), order = 1)
-            gt_p_batch = Batch.from_list(train_gt[count], order = 1)
+            out = model(batch)
+            batch_len = out.data.shape[0]
+            out = out.view(batch_len * 8, 2) #hardcoding od for now: out.view(batch_len * output_dim, 2) 
+            # hulls = Batch.from_list(get_approx_chull(out, od=8), order = 1) #hardcoding output dim
             
+                        
             loss = direction_loss(out, batch, directions, n=50, in_dim=2, device = device) #hardcoding in_dim -- change later
             
             total_loss += loss.detach()
@@ -246,7 +258,7 @@ def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_g
             torch.save(model.state_dict(), path)
 
             #saving output
-            gen_model_output(model, train_dataloader, test_dataloader, log_dir, epoch, device)
+            # gen_model_output(model, train_dataloader, test_dataloader, log_dir, epoch, device)
 
             # hulls = [tensor.cpu().detach().numpy() for tensor in get_approx_chull(out, batch)]
             # print(np.array(hulls))
