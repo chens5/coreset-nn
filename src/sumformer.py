@@ -11,6 +11,7 @@ from .basic import MLP
 from .combinators import ResidualShortcut, Repeat
 from torch_geometric.nn.aggr import Aggregation
 from torch_geometric.nn.resolver import aggregation_resolver
+from torch_geometric.nn.pool import global_max_pool
 from .data_representation import Batch
 
 
@@ -135,7 +136,8 @@ class ConvexHullNN(nn.Module):
         out = self.initial(x)
         out = self.sumformer(out)
         out = self.ff1(out)
-       
+        print(f'model output: {out.data.shape}')
+
         return out
 
 
@@ -144,32 +146,35 @@ class ConvexHullNN_new(nn.Module):
         super().__init__()
         self.initial = nn.Linear(in_features=input_dim, out_features=embedding_dim)
         self.sumformer = Sumformer(num_blocks=depth, input_dim = embedding_dim, hidden_dim=hidden_dim)
+        self.batch_size = 256 #hardcoding for now
         
         self.max_pool = nn.AdaptiveMaxPool1d(output_size = 1)
         self.mlp = nn.Sequential(
-            nn.Linear(input_dim, embedding_dim),
+            nn.Linear(2 * output_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(embedding_dim, 2)
+            # nn.Linear(hidden_dim, 2) # is this wrong?
+            nn.Linear(hidden_dim, output_dim * 2)
         )
 
     def forward(self, x: Tensor|Batch):
         out = self.initial(x)
         out = self.sumformer(out) #shape: [50 * batch_size, 16]
         out = out.unsqueeze(0)  # Shape: [1, 50 * batch_size, 16]
-        print(out.data.shape)
-        out = out.permute(0, 2, 1)
-        print(f'after perm: {out.data.shape}') 
-
-        
-        out = out.apply_max_pool1d(self.max_pool)
-        # out = self.max_pool(out)
-        print(out.data.shape) #should be: [1, 2 * output_dim, batch_size], but is [1, 2 * output_dim, 1]
-        out = out.squeeze(0)  # shape: [2 * output_dim, 1]
-
 
     
+        # print(out.batch1)
+        out = global_max_pool(x = out.data, batch = out.batch1) #shape: [1, batch_size, 2 * output_dim]
+
+
+        # out = out.apply_max_pool1d(self.max_pool)
+        # out = self.max_pool(out)
+        # print(out.data.shape)
+        out = out.squeeze(0)  # shape: [batch_size, 2 * output_dim]
+        
         out = self.mlp(out)
-        print(f'output {out.data.shape}') 
+        out = Batch.from_unbatched(out)
+
+        # print(f'output: {out.data.shape}')
 
        
         return out
