@@ -295,10 +295,10 @@ class Batch:
 
         # Split and apply pooling
         for tensor in self.batch_split():
-            print(tensor.shape)
-            pooled_tensor = max_pool(tensor)
-            print(pooled_tensor.shape)
-            pooled_data.append(pooled_tensor)
+            # print(tensor.shape)
+            pooled_tensor = max_pool(tensor)  # Apply max pooling
+            # print(pooled_tensor.shape)
+            pooled_data.append(pooled_tensor)  # Remove batch dimension
 
         # Concatenate pooled data
         pooled_data = torch.cat(pooled_data, dim=0)
@@ -320,6 +320,7 @@ class Batch:
         F.softmax: None,
         F.adaptive_max_pool1d: None,
         torch.nn.AdaptiveMaxPool1d: None,
+        torch.matmul: None
         }
 
     @classmethod
@@ -367,6 +368,19 @@ class Batch:
         order = orders[0]
         
         ##############################actual call
+
+        # if func == torch.matmul:
+        #     # Custom logic for torch.matmul
+        #     data1, data2 = new_args
+        #     # Ensure tensors are batch-aware
+        #     if isinstance(data1, Batch):
+        #         data1 = data1.data
+        #     if isinstance(data2, Batch):
+        #         data2 = data2.data
+        #     result_data = torch.matmul(data1, data2)
+        #     return Batch(data=result_data, order=order, indicator=indicator)
+
+        
         result_data = func(*new_args, **new_kwargs)
 
         ##############################return
