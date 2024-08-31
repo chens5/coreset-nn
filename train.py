@@ -119,32 +119,38 @@ def cross_entropy_loss():
     return 0
 
 def compute_test_error(model, directions, test_dataloader, test_gt, test_sz, device='cuda:0'):
-    count = 0
-    loss = 0
-    for batch in test_dataloader:
-        batch = batch.to(device)
+    try:
+        count = 0
+        loss = 0
+        for batch in test_dataloader:
+            batch = batch.to(device)
 
-        if modeltype == ConvexHullNN:
-            out = model(batch) #old model
+            if isinstance(model, ConvexHullNN):
+                out = model(batch) #old model
 
-            #reshaping to apply softmax setwise
-            out = out.data.view(-1, 25, out.data.size(-1))
-            out = F.softmax(out, dim=1)
-            out = out.view(-1, out.size(-1))
+                #reshaping to apply softmax setwise
+                out = out.data.view(-1, 25, out.data.size(-1))
+                out = F.softmax(out, dim=1)
+                out = out.view(-1, out.size(-1))
 
-            hulls = Batch.from_list(get_approx_chull(out, batch), order = 1).to(device)
-    
-            loss += direction_loss(hulls, batch, directions, in_dim = 2, device = device).detach()
+                hulls = Batch.from_list(get_approx_chull(out, batch), order = 1).to(device)
+        
+                loss += direction_loss(hulls, batch, directions, in_dim = 2, device = device).detach()
 
-        else:
-            out = model(batch) #old model
-            hulls = Batch.from_list(out, order = 1).to(device)
+            else:
+                out = model(batch)
+                batch_size = int(batch.data.shape[0] / 25) #hardcoding
+                n_nodes = torch.full((batch_size,), 8).to(device) #hardcoding output_dim for now
+                out =  Batch.from_batched(out, n_nodes = n_nodes, order = 1)
 
-            loss += direction_loss(hulls, batch, directions, in_dim = 2, device = device).detach()
+                loss = direction_loss(out, batch, directions, n=50, in_dim=2, device = device) #hardcoding in_dim -- change later
 
-        count += 1
-    loss = loss/test_sz
-    return loss
+
+            count += 1
+        loss = loss/test_sz
+        return loss
+    except:
+        return None
 
 
 def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_gt, device, log_dir,
@@ -205,6 +211,11 @@ def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_g
 
             else:
                 out = model(batch)
+                batch_size = int(batch.data.shape[0] / 25) #hardcoding
+                n_nodes = torch.full((batch_size,), 8).to(device) #hardcoding output_dim for now
+                out =  Batch.from_batched(out, n_nodes = n_nodes, order = 1)
+
+
                 loss = direction_loss(out, batch, directions, n=50, in_dim=2, device = device) #hardcoding in_dim -- change later
                 
             total_loss += loss.detach()
