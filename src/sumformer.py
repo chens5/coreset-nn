@@ -129,52 +129,63 @@ class ConvexHullNN(nn.Module):
         super().__init__()
         self.initial = nn.Linear(in_features=input_dim, out_features=embedding_dim)
         self.sumformer = Sumformer(num_blocks=depth, input_dim = embedding_dim, hidden_dim=hidden_dim)
-        self.ff1 = nn.Linear(in_features = embedding_dim, out_features=output_dim) #old feedforward
+        # self.ff1 = nn.Linear(in_features = embedding_dim, out_features=output_dim) #old feedforward
+        self.mlp = nn.Sequential(
+            nn.Linear(embedding_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, output_dim)
+        )
         
        
     def forward(self, x: Tensor|Batch):
         out = self.initial(x)
         out = self.sumformer(out)
-        out = self.ff1(out)
-        print(f'model output: {out.data.shape}')
+        # out = self.ff1(out)
+        # print(f'out data shape (initial): {out.data.shape}')
+        # print(f'indicator shape (initial): {out.batch1.shape}')
+        out = self.mlp(out)
+
+        # print(f'out data shape (forward): {out.data.shape}')
+        # print(f'indicator shape (forward): {out.batch1.shape}')
 
         return out
 
 
 class ConvexHullNN_new(nn.Module):
-    def __init__(self, input_dim, embedding_dim, hidden_dim, output_dim, depth, *args):
+    def __init__(self, input_dim, embedding_dim, hidden_dim, output_dim, depth, n_layers, *args):
         super().__init__()
+        self.output_dim = output_dim
         self.initial = nn.Linear(in_features=input_dim, out_features=embedding_dim)
         self.sumformer = Sumformer(num_blocks=depth, input_dim = embedding_dim, hidden_dim=hidden_dim)
-        self.batch_size = 256 #hardcoding for now
+
+        self.mlp = MLP(embedding_dim, *[hidden_dim]*n_layers, embedding_dim, batchnorm=False, activation=nn.LeakyReLU)
+        self.final = nn.Linear(in_features=embedding_dim, out_features=output_dim * 2)
         
-        self.max_pool = nn.AdaptiveMaxPool1d(output_size = 1)
-        self.mlp = nn.Sequential(
-            nn.Linear(2 * output_dim, hidden_dim),
-            nn.ReLU(),
-            # nn.Linear(hidden_dim, 2) # is this wrong?
-            nn.Linear(hidden_dim, output_dim * 2)
-        )
+        # self.mlp = nn.Sequential(
+        #     nn.Linear(2 * output_dim, hidden_dim),
+        #     nn.LeakyReLU(),
+        #     nn.Linear(hidden_dim, hidden_dim),
+        #     nn.LeakyReLU(),
+        #     nn.Linear(hidden_dim, output_dim * 2)
+        # )
 
     def forward(self, x: Tensor|Batch):
+
         out = self.initial(x)
         out = self.sumformer(out) #shape: [50 * batch_size, 16]
         out = out.unsqueeze(0)  # Shape: [1, 50 * batch_size, 16]
 
     
-        # print(out.batch1)
-        out = global_max_pool(x = out.data, batch = out.batch1) #shape: [1, batch_size, 2 * output_dim]
+        out = global_max_pool(x = out.data, batch = out.batch1).squeeze(dim=0) #shape: [batch_size, 2 * output_dim]
+        # out =  Batch.from_batched(out, n_nodes = n_nodes, order = 1) # switch n nodes or delete this line
 
-
-        # out = out.apply_max_pool1d(self.max_pool)
-        # out = self.max_pool(out)
-        # print(out.data.shape)
-        out = out.squeeze(0)  # shape: [batch_size, 2 * output_dim]
         
         out = self.mlp(out)
-        out = Batch.from_unbatched(out)
+        out = self.final(out)
 
-        # print(f'output: {out.data.shape}')
-
+        batch_len = out.data.shape[0]
+        out = out.reshape(batch_len * self.output_dim, 2)
        
-        return out
+        return out #return as a tensor
