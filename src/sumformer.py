@@ -11,7 +11,7 @@ from .basic import MLP
 from .combinators import ResidualShortcut, Repeat
 from torch_geometric.nn.aggr import Aggregation
 from torch_geometric.nn.resolver import aggregation_resolver
-
+from torch_geometric.nn.pool import global_max_pool
 from .data_representation import Batch
 
 
@@ -123,16 +123,108 @@ class Sumformer(Repeat):
     def __init__(self, num_blocks: int, *block_args, **block_kwargs):
         make_block = lambda: SumformerBlock(*block_args, **block_kwargs)
         super().__init__(num_blocks, make_block)
+
+class PointEncoder(nn.Module):
+    def __init__(self, dimension, mlp_params: dict, phi_params: dict, bn=False, mean=False,max=False, activation='relu'):
+        super(PointEncoder, self).__init__()
+        mlp_hdim = mlp_params['hidden']
+        mlp_output = mlp_params['output']
+        mlp_layers = mlp_params['layers']
+
+        phi_hdim = phi_params['hidden']
+        phi_layers = phi_params['layers']
+        phi_output = phi_params['output']
+        self.mlp = initialize_mlp(dimension, mlp_hdim, mlp_output, mlp_layers, activation=activation)
+        self.phi = initialize_mlp(mlp_output, phi_hdim, phi_output, phi_layers, activation=activation)
+        self.mean = mean
+        self.max = max
+    
+    def forward(self, input):
+        
+        out = self.mlp(input)
+        if self.mean:
+            out = torch.mean(out, dim=0)
+        elif self.max:
+            out = torch.max(out, dim=0)[0]
+        else:
+            out = torch.sum(out, dim=0)
+        out = self.phi(out)
+        return out
     
 class ConvexHullNN(nn.Module):
     def __init__(self, input_dim, embedding_dim, hidden_dim, output_dim, depth, *args):
         super().__init__()
         self.initial = nn.Linear(in_features=input_dim, out_features=embedding_dim)
         self.sumformer = Sumformer(num_blocks=depth, input_dim = embedding_dim, hidden_dim=hidden_dim)
-        self.final = nn.Linear(in_features = embedding_dim, out_features=output_dim)
-
+        # self.ff1 = nn.Linear(in_features = embedding_dim, out_features=output_dim) #old feedforward
+        self.mlp = nn.Sequential(
+            nn.Linear(embedding_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, output_dim)
+        )
+        
+       
     def forward(self, x: Tensor|Batch):
         out = self.initial(x)
         out = self.sumformer(out)
-        out = self.final(out)
+        # out = self.ff1(out)
+        # print(f'out data shape (initial): {out.data.shape}')
+        # print(f'indicator shape (initial): {out.batch1.shape}')
+        out = self.mlp(out)
+
+        # print(f'out data shape (forward): {out.data.shape}')
+        # print(f'indicator shape (forward): {out.batch1.shape}')
+
         return out
+
+
+class ConvexHullNN_new(nn.Module):
+    def __init__(self, input_dim, embedding_dim, hidden_dim, output_dim, depth, n_layers, *args):
+        super().__init__()
+        self.output_dim = output_dim
+        self.initial = nn.Linear(in_features=input_dim, out_features=embedding_dim)
+        self.sumformer = Sumformer(num_blocks=depth, input_dim = embedding_dim, hidden_dim=hidden_dim)
+
+        self.mlp = MLP(embedding_dim, *[hidden_dim]*n_layers, embedding_dim, batchnorm=False, activation=nn.LeakyReLU)
+        self.final = nn.Linear(in_features=embedding_dim, out_features=output_dim * 2)
+        
+        # self.mlp = nn.Sequential(
+        #     nn.Linear(2 * output_dim, hidden_dim),
+        #     nn.LeakyReLU(),
+        #     nn.Linear(hidden_dim, hidden_dim),
+        #     nn.LeakyReLU(),
+        #     nn.Linear(hidden_dim, output_dim * 2)
+        # )
+
+    def forward(self, x: Tensor|Batch):
+
+        out = self.initial(x)
+        out = self.sumformer(out) #shape: [50 * batch_size, 16]
+        out = out.unsqueeze(0)  # Shape: [1, 50 * batch_size, 16]
+
+    
+        out = global_max_pool(x = out.data, batch = out.batch1).squeeze(dim=0) #shape: [batch_size, 2 * output_dim]
+        # out =  Batch.from_batched(out, n_nodes = n_nodes, order = 1) # switch n nodes or delete this line
+
+        
+        out = self.mlp(out)
+        out = self.final(out)
+
+        batch_len = out.data.shape[0]
+        out = out.reshape(batch_len * self.output_dim, 2)
+       
+        return out #return as a tensor
+
+
+class encoder_process_decoder(nn.Module):
+    def __init__(self, encoder, processor, decoder, input_dim, output_dim, *args):
+        self.encoder = encoder()
+        self.processor = processor()
+        self.decoder = decoder() 
+
+    def forward(self, x: Tensor|Batch):
+        out = self.encoder(x)
+        out = self.processor(x)
+        out = self.decoder(x)
