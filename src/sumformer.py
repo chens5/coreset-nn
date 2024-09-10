@@ -125,17 +125,14 @@ class Sumformer(Repeat):
         super().__init__(num_blocks, make_block)
 
 class PointEncoder(nn.Module):
-    def __init__(self, dimension, mlp_params: dict, phi_params: dict, bn=False, mean=False,max=False, activation='relu'):
+    def __init__(self, input_dim, embed_dim, mlp_hdim, mlp_out_dim, mlp_layers, phi_hdim, phi_out_dim, phi_layers, batchnorm=False, mean=False, max=False, activation=nn.LeakyReLU):
         super(PointEncoder, self).__init__()
-        mlp_hdim = mlp_params['hidden']
-        mlp_output = mlp_params['output']
-        mlp_layers = mlp_params['layers']
 
-        phi_hdim = phi_params['hidden']
-        phi_layers = phi_params['layers']
-        phi_output = phi_params['output']
-        self.mlp = initialize_mlp(dimension, mlp_hdim, mlp_output, mlp_layers, activation=activation)
-        self.phi = initialize_mlp(mlp_output, phi_hdim, phi_output, phi_layers, activation=activation)
+        self.mlp = MLP(input_dim, *[hidden_dim]*mlp_layers, embed_dim, batchnorm, activation)
+        # self.mlp initialize_mlp(dimension, mlp_hdim, mlp_output, mlp_layers, activation=activation)
+        # self.phi = initialize_mlp(embed_dim, phi_hdim, phi_out_dim, phi_layers, activation=activation)
+        self.phi = MLP(embed_dim, *[phi_hdim]*phi_layers, phi_out_dim, batchnorm, activation)
+
         self.mean = mean
         self.max = max
     
@@ -218,13 +215,15 @@ class ConvexHullNN_new(nn.Module):
         return out #return as a tensor
 
 
-class encoder_process_decoder(nn.Module):
+class EncoderProcessDecoder(nn.Module):
     def __init__(self, encoder, processor, decoder, input_dim, output_dim, *args):
+        super(EncoderProcessDecoder, self).__init__()
+
         self.encoder = encoder()
         self.processor = processor()
         self.decoder = decoder() 
 
     def forward(self, x: Tensor|Batch):
         out = self.encoder(x)
-        out = self.processor(x)
-        out = self.decoder(x)
+        out = self.processor(out)
+        out = self.decoder(out)
