@@ -123,6 +123,28 @@ class Sumformer(Repeat):
     def __init__(self, num_blocks: int, *block_args, **block_kwargs):
         make_block = lambda: SumformerBlock(*block_args, **block_kwargs)
         super().__init__(num_blocks, make_block)
+
+class PointEncoder(nn.Module):
+    def __init__(self, input_dim, embed_dim, mlp_hdim, mlp_out_dim, mlp_layers, phi_hdim, phi_out_dim, phi_layers, batchnorm=False, mean=False, use_max=False, activation=nn.LeakyReLU):
+        super(PointEncoder, self).__init__()
+
+        self.mlp = MLP(input_dim, *[mlp_hdim]*mlp_layers, embed_dim, batchnorm=batchnorm, activation = activation)
+        self.phi = MLP(embed_dim, *[phi_hdim]*phi_layers, phi_out_dim, batchnorm = batchnorm, activation = activation)
+
+        self.mean = mean
+        self.max = use_max
+    
+    def forward(self, input):
+        
+        out = self.mlp(input)
+        if self.mean:
+            out = torch.mean(out, dim=0)
+        elif self.max:
+            out = torch.max(out, dim=0)[0]
+        else:
+            out = torch.sum(out, dim=0)
+        out = self.phi(out)
+        return out
     
 class ConvexHullNN(nn.Module):
     def __init__(self, input_dim, embedding_dim, hidden_dim, output_dim, depth, *args):
@@ -189,3 +211,17 @@ class ConvexHullNN_new(nn.Module):
         out = out.reshape(batch_len * self.output_dim, 2)
        
         return out #return as a tensor
+
+
+class EncoderProcessDecoder(nn.Module):
+    def __init__(self, encoder, processor, decoder, *args):
+        super(EncoderProcessDecoder, self).__init__()
+
+        self.encoder = encoder
+        self.processor = processor
+        self.decoder = decoder
+
+    def forward(self, x: Tensor|Batch):
+        out = self.encoder(x).unsqueeze(0) #check if this is desired behavior
+        out = self.processor(out)
+        out = self.decoder(out)
