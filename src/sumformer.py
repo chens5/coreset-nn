@@ -100,12 +100,15 @@ class SumformerInnerBlock(nn.Module):
         sigma = self.global_embedding(x)
 
         sigma_hiddendim = self.aggreg_linear(sigma) #batch_size, hidden_dim
+        #return here
         x_hiddendim = self.input_linear(x.data) #n_nodes_total, hidden_dim
         
         psi_input = x_hiddendim + sigma_hiddendim[x.batch, :] #n_nodes_total, hidden_dim
         psi_input = F.leaky_relu(psi_input) #n_nodes_total, hidden_dim
 
         return Batch.from_other(self.psi(psi_input), x) #n_nodes_total, input_dim
+
+    #add getter method for aggregation?
 
 class SumformerBlock(nn.Sequential):
     """
@@ -171,8 +174,23 @@ class ConvexHullNN(nn.Module):
 
         # print(f'out data shape (forward): {out.data.shape}')
         # print(f'indicator shape (forward): {out.batch1.shape}')
-
+        
         return out
+
+    def get_approx_chull(self, x: Tensor|Batch):
+        
+        hulls = []
+        start = 0
+        for num in batch.n_nodes:
+            end = start + num
+            ptset = batch.data[start:end]
+            ptset_probs = probabilities.data[start:end]
+            # print(f'probs (from softmax): {ptset_probs}')
+            hull_approx = torch.mm(ptset_probs.T, ptset)
+            hulls.append(hull_approx)
+            start = end
+        
+        return hulls
 
 
 class ConvexHullNN_new(nn.Module):
@@ -208,20 +226,46 @@ class ConvexHullNN_new(nn.Module):
         out = self.final(out)
 
         batch_len = out.data.shape[0]
-        out = out.reshape(batch_len * self.output_dim, 2)
+        out = out.reshape(batch_len * self.output_dim, 2) #need to update, hardcoding for 2d
        
         return out #return as a tensor
 
+        def get_approx_chull(self, x: Tensor|Batch):
+            return x
+
+
+class ConvexHullEncoder(nn.Module):
+    def __init__(self, input_dim, encoder_depth, encoder_width, encoder_output_dim,
+                processor_depth, processor_embedding_dim, processor_hidden_dim, processor_output_dim, **config):
+        super(ConvexHullEncoder, self).__init__()
+
+        self.encoder = MLP(input_dim, *[encoder_width]*encoder_depth, encoder_output_dim, 
+                            batchnorm=False, activation=nn.LeakyReLU)
+        self.processor = ConvexHullNN(depth=processor_depth, embedding_dim=processor_embedding_dim, 
+                                                    hidden_dim=processor_hidden_dim, input_dim=encoder_output_dim, 
+                                                    output_dim=processor_output_dim)
+
+    def forward(self, x):
+        out = self.encoder(x)
+        out = self.processor(out)
+        return out
+
+
 
 class EncoderProcessDecoder(nn.Module):
-    def __init__(self, encoder, processor, decoder, *args):
+    def __init__(self, *args):
         super(EncoderProcessDecoder, self).__init__()
 
-        self.encoder = encoder
-        self.processor = processor
-        self.decoder = decoder
+        self.encoder = globals()[encoder_layer](*encoder_configs)
+        self.processor = globals()[processor_layer](*processor_configs)
+        #self.include_decoder = include_decoder
+        print(decoder_configs)
+        if include_decoder:
+            self.decoder = globals()[decoder_layer](*decoder_configs)
 
-    def forward(self, x: Tensor|Batch):
-        out = self.encoder(x).unsqueeze(0) #check if this is desired behavior
+
+    def forward(self, include_decoder, x: Tensor|Batch):
+        out = self.encoder(x) #check if this is desired behavior
         out = self.processor(out)
+        out = self.processor.get_approx_chull(out)
         out = self.decoder(out)
