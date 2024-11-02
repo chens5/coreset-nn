@@ -163,7 +163,7 @@ def compute_test_error(model, directions, test_dataloader, test_gt, test_sz, dev
         for batch in test_dataloader:
             batch = batch.to(device)
 
-            if isinstance(model, ConvexHullNN):
+            if isinstance(model, ConvexHullNN) or isinstance(model, ConvexHullNNTransformer):
                 out = model(batch) #old model
 
                 #reshaping to apply softmax setwise
@@ -251,21 +251,21 @@ def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_g
 
 
 
-            elif isinstance(model, ConvexHullNN):
+            elif isinstance(model, ConvexHullNN) or isinstance(model, ConvexHullNNTransformer):
                 out = model(batch)
 
                 #reshaping to apply softmax setwise
-                out = out.view(-1, 100, out.data.size(-1))
+                out = out.view(-1, 25, out.data.size(-1))
                 out = F.softmax(out, dim=1)
                 out = out.view(-1, out.data.size(-1))
 
                 hulls = Batch.from_list(get_approx_chull(out, batch), order = 1).to(device)
                 
-                loss = direction_loss(hulls, batch, directions=directions, n=200, in_dim=10, device = device) #todo: hardcoding in_dim
+                loss = direction_loss(hulls, batch, directions=directions, n=200, in_dim=2, device = device) #todo: hardcoding in_dim
 
             else:
                 out = model(batch)
-                batch_size = int(batch.data.shape[0] / 50) #hardcoding
+                batch_size = int(batch.data.shape[0] / 25) #hardcoding
                 n_nodes = torch.full((batch_size,), 25).to(device) #hardcoding output_dim for now
                 out =  Batch.from_batched(out, n_nodes = n_nodes, order = 1)
 
@@ -283,20 +283,6 @@ def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_g
         if epoch % save_freq == 0:
             path = os.path.join(record_dir, f'model_{epoch}.pt')
             torch.save(model.state_dict(), path)
-
-            #saving output
-            # gen_model_output(model, train_dataloader, test_dataloader, log_dir, epoch, device)
-
-            # hulls = [tensor.cpu().detach().numpy() for tensor in get_approx_chull(out, batch)]
-            # print(np.array(hulls))
-            
-            # model_output_dir = os.path.join(log_dir, 'output')
-            # if not os.path.exists(model_output_dir):
-            #     os.makedirs(model_output_dir)
-            # np.save(os.path.join(model_output_dir, f'chull_test_e{epoch}'), np.array(hulls))
-            # print('output saved')
-            # hulls = [torch.tensor(arr) for arr in hulls]
-            # hulls = Batch.from_list(hulls, order = 1) #casting back to batch
     
     
     path = os.path.join(log_dir, 'final_model.pt')
