@@ -131,6 +131,9 @@ class PointEncoder(nn.Module):
     def __init__(self, input_dim, embed_dim, mlp_hdim, mlp_out_dim, mlp_layers, phi_hdim, phi_out_dim, phi_layers, batchnorm=False, mean=False, use_max=False, activation=nn.LeakyReLU):
         super(PointEncoder, self).__init__()
 
+        print(f"input_dim: {input_dim}, mlp_hdim: {mlp_hdim}, mlp_layers: {mlp_layers}, embed_dim: {embed_dim}")
+
+
         self.mlp = MLP(input_dim, *[mlp_hdim]*mlp_layers, embed_dim, batchnorm=batchnorm, activation = activation)
         self.phi = MLP(embed_dim, *[phi_hdim]*phi_layers, phi_out_dim, batchnorm = batchnorm, activation = activation)
 
@@ -178,18 +181,25 @@ class ConvexHullNN(nn.Module):
         return out
 
     def get_approx_chull(self, x: Tensor|Batch):
+
+        
+        probabilities = x.view(-1, 50, x.data.size(-1)) #TODO: hardcoding meb ptset size = 50 
+        probabilities = F.softmax(probabilities, dim=1)
+        probabilities = probabilities.view(-1, probabilities.data.size(-1))
         
         hulls = []
         start = 0
-        for num in batch.n_nodes:
+        for num in x.n_nodes:
             end = start + num
-            ptset = batch.data[start:end]
+            ptset = x.data[start:end]
             ptset_probs = probabilities.data[start:end]
             # print(f'probs (from softmax): {ptset_probs}')
             hull_approx = torch.mm(ptset_probs.T, ptset)
             hulls.append(hull_approx)
             start = end
         
+        hulls = torch.stack(hulls)
+        print(hulls.shape)
         return hulls
 
 
@@ -251,21 +261,29 @@ class ConvexHullEncoder(nn.Module):
         return out
 
 
-
 class EncoderProcessDecoder(nn.Module):
-    def __init__(self, *args):
+    def __init__(self, input_dim, encoder_depth, encoder_width, encoder_output_dim,
+                processor_layer, processor_configs, processor_path, 
+                decoder_layer=None, decoder_configs=None, **config):
         super(EncoderProcessDecoder, self).__init__()
 
-        self.encoder = globals()[encoder_layer](*encoder_configs)
-        self.processor = globals()[processor_layer](*processor_configs)
-        #self.include_decoder = include_decoder
-        print(decoder_configs)
-        if include_decoder:
-            self.decoder = globals()[decoder_layer](*decoder_configs)
+        self.encoder = MLP(input_dim, *[encoder_width]*encoder_depth, encoder_output_dim, 
+                            batchnorm=False, activation=nn.LeakyReLU)
+        self.processor = globals()[processor_layer](**processor_configs)
+        self.processor.load_state_dict(torch.load(processor_path))
 
 
-    def forward(self, include_decoder, x: Tensor|Batch):
-        out = self.encoder(x) #check if this is desired behavior
+        activation_mapping = {
+            'nn.LeakyReLU': nn.LeakyReLU,
+            'nn.ReLU': nn.ReLU
+        }
+        decoder_configs['activation'] = activation_mapping[decoder_configs['activation']]
+
+        self.decoder = globals()[decoder_layer](**decoder_configs)
+
+    def forward(self, x: Tensor | Batch):
+        out = self.encoder(x)  # Pass input through the encoder
         out = self.processor(out)
-        out = self.processor.get_approx_chull(out)
+        out = self.processor.get_approx_chull(out)  # compute convex hull with processor
         out = self.decoder(out)
+        return out
