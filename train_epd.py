@@ -7,11 +7,10 @@ from eval_utils import directional_width, directional_err
 
 from torch.optim import Adam
 
-from torch.nn import CrossEntropyLoss, NLLLoss
+from torch.nn import CrossEntropyLoss, NLLLoss, MSELoss
 from torch.utils.data import DataLoader
 from geotorch.sphere import uniform_init_sphere_ as unif_sphere
 from scipy.spatial.distance import directed_hausdorff
-
 
 import argparse
 import os
@@ -158,50 +157,51 @@ def cross_entropy_loss():
     return 0
 
 def compute_test_error(model, directions, test_dataloader, test_gt, test_sz, device='cuda:0'):
-    try:
-        count = 0
-        loss = 0
-        for batch in test_dataloader:
-            batch = batch.to(device)
+    return None
+    # try:
+    #     count = 0
+    #     loss = 0
+    #     for batch in test_dataloader:
+    #         batch = batch.to(device)
 
-            if isinstance(model, ConvexHullEncoderTransformer):
-                out, attn_maps = model(batch)
-                #reshaping to apply softmax setwise
-                out = out.data.view(-1, 25, out.data.size(-1)) #todo: hardcoding ptset size
-                out = F.softmax(out, dim=1)
-                out = out.view(-1, out.size(-1))
+    #         if isinstance(model, ConvexHullEncoderTransformer):
+    #             out, attn_maps = model(batch)
+    #             #reshaping to apply softmax setwise
+    #             out = out.data.view(-1, 25, out.data.size(-1)) #todo: hardcoding ptset size
+    #             out = F.softmax(out, dim=1)
+    #             out = out.view(-1, out.size(-1))
 
-                hulls = Batch.from_list(get_approx_chull(out, batch), order = 1).to(device)
+    #             hulls = Batch.from_list(get_approx_chull(out, batch), order = 1).to(device)
         
-                loss += direction_loss(hulls, batch, directions=directions, in_dim = 2, device = device).detach() #todo: hardcoding input_dim
+    #             loss += direction_loss(hulls, batch, directions=directions, in_dim = 2, device = device).detach() #todo: hardcoding input_dim
                 
 
-            if isinstance(model, ConvexHullNN) or isinstance(model, ConvexHullNNTransformer):
-                out = model(batch) #old model
+    #         if isinstance(model, ConvexHullNN) or isinstance(model, ConvexHullNNTransformer):
+    #             out = model(batch) #old model
 
-                #reshaping to apply softmax setwise
-                out = out.data.view(-1, 25, out.data.size(-1)) #todo: hardcoding ptset size
-                out = F.softmax(out, dim=1)
-                out = out.view(-1, out.size(-1))
+    #             #reshaping to apply softmax setwise
+    #             out = out.data.view(-1, 25, out.data.size(-1)) #todo: hardcoding ptset size
+    #             out = F.softmax(out, dim=1)
+    #             out = out.view(-1, out.size(-1))
 
-                hulls = Batch.from_list(get_approx_chull(out, batch), order = 1).to(device)
+    #             hulls = Batch.from_list(get_approx_chull(out, batch), order = 1).to(device)
         
-                loss += direction_loss(hulls, batch, directions=directions, in_dim = 2, device = device).detach() #todo: hardcoding in_dim
+    #             loss += direction_loss(hulls, batch, directions=directions, in_dim = 2, device = device).detach() #todo: hardcoding in_dim
 
-            else:
-                out = model(batch)
-                batch_size = int(batch.data.shape[0] / 50) #hardcoding ptset_size
-                n_nodes = torch.full((batch_size,), 50).to(device) #hardcoding output_dim for now
-                out =  Batch.from_batched(out, n_nodes = n_nodes, order = 1)
+    #         else:
+    #             out = model(batch)
+    #             batch_size = int(batch.data.shape[0] / 50) #hardcoding ptset_size
+    #             n_nodes = torch.full((batch_size,), 50).to(device) #hardcoding output_dim for now
+    #             out =  Batch.from_batched(out, n_nodes = n_nodes, order = 1)
 
-                loss = direction_loss(out, batch, directions=directions, n=50, in_dim=10, device = device) #todo: hardcoding in_dim 
+    #             loss = mse #todo: copy mse
 
 
-            count += 1
-        loss = loss/test_sz
-        return loss
-    except:
-        return None
+    #         count += 1
+    #     loss = loss/test_sz
+    #     return loss
+    # except:
+    #     return None
 
 
 def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_gt, device, log_dir, epd,
@@ -213,9 +213,14 @@ def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_g
     model = globals()[modeltype](**config)
     model.to(device)
 
-    # Freeze processor weights
-    for param in model.processor.parameters():
-        param.requires_grad = False
+    # Freeze processor weights, todo:
+    if args.processor_path is not None:
+        print('freezing processor')
+        for param in model.processor.parameters():
+            param.requires_grad = False
+
+    else:
+        print('processor unfrozen')
 
     trainable_params = list(model.encoder.parameters()) + list(model.decoder.parameters()) #only encoder and decoder params
 
@@ -243,68 +248,36 @@ def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_g
 
     # if not epd:
     # # generating evenly spaced directions -- hardcoding for 2d
-    angles = np.linspace(0, 2 * np.pi, 100, endpoint=False)
-    x = np.cos(angles)
-    y = np.sin(angles)
+    # angles = np.linspace(0, 2 * np.pi, 100, endpoint=False)
+    # x = np.cos(angles)
+    # y = np.sin(angles)
 
-    x_tensor = torch.tensor(x)
-    y_tensor = torch.tensor(y)
-    directions = torch.stack([x_tensor, y_tensor], dim=1)
-    directions = directions.t().float().to(device)
-    directions = None
+    # x_tensor = torch.tensor(x)
+    # y_tensor = torch.tensor(y)
+    # directions = torch.stack([x_tensor, y_tensor], dim=1)
+    # directions = directions.t().float().to(device)
+    # directions = None
+
+    criterion = nn.MSELoss()
 
     for epoch in trange(epochs):
         count = 0
         total_loss = 0.0
 
 
-        for batch in train_dataloader:
+        for batch, gt in zip(train_dataloader, train_gt):
 
             optimizer.zero_grad()
             batch = batch.to(device)
+            gt = gt.to(device)
 
+            out = model(batch)
 
+            # print(f'out shape: {out.data.shape}') #incorrect, should be [128, 4]
+            # print(f'gt shape: {gt.data.shape}')
+            loss = criterion(out, gt)
 
-            if epd:
-               
-                out = model(batch)
-                print(out.shape)
-                # out = out.view(-1, 50, out.data.size(-1)) #meb ptset size = 50
-                # out = F.softmax(out, dim=1)
-                # out = out.view(-1, out.data.size(-1))
-
-                # hulls = Batch.from_list(get_approx_chull(out, batch), order = 1).to(device)
-                
-                #todo: check loss function
-                loss = direction_loss(out, batch, directions=directions, n=200, in_dim=3, device = device) #todo: hardcoding in_dim
-
-
-
-            elif isinstance(model, ConvexHullNN) or isinstance(model, ConvexHullNNTransformer):
-                out = model(batch)
-                # if isinstance(model, ConvexHullNNTransformer):
-                #     out, attn_maps = model(batch)
-                # else:
-                #     out = model(batch)
-
-                #reshaping to apply softmax setwise
-                out = out.view(-1, 25, out.data.size(-1))
-                out = F.softmax(out, dim=1)
-                out = out.view(-1, out.data.size(-1))
-
-                hulls = Batch.from_list(get_approx_chull(out, batch), order = 1).to(device)
-                
-                loss = direction_loss(hulls, batch, directions=directions, n=200, in_dim=2, device = device) #todo: hardcoding in_dim
-
-            else:
-                out = model(batch)
-                batch_size = int(batch.data.shape[0] / 25) #hardcoding
-                n_nodes = torch.full((batch_size,), 25).to(device) #hardcoding output_dim for now
-                out =  Batch.from_batched(out, n_nodes = n_nodes, order = 1)
-
-
-                loss = direction_loss(out, batch, directions, n=200, in_dim=5, device = device) #todo: hardcoding in_dim -- change later
-                
+           
             total_loss += loss.detach()
             loss.backward()
             optimizer.step()
@@ -322,7 +295,7 @@ def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_g
     print("saving model to:", path)
     torch.save(model.state_dict(), path)
 
-    test_err = compute_test_error(model, directions, test_dataloader, test_gt, 300, device = device)
+    test_err = compute_test_error(model, None, test_dataloader, test_gt, 300, device = device)
     print("test error:", test_err)
 
     return test_err
@@ -350,9 +323,10 @@ def main():
     # Load data 
     train_file = os.path.join(output_dir, 'data', args.datafile)
 
-
+    print(train_file)
 
     raw_data = json.load(open(train_file))
+    print(len(raw_data[0]['pointset'][0]))
 
     train_batches, train_gt = json_to_batches(raw_data[:2400], args.batch_size) #dataset size = 3000
     test_batches, test_gt = json_to_batches(raw_data[2400:], args.batch_size)
@@ -374,7 +348,7 @@ def main():
         log_dir = format_log_dir(output_dir, 
                                 args.dataset_name, 
                                 modelname, 
-                                'direction', 
+                                'mse', 
                                 args.layer_type,
                                 args.trial)
                                     
