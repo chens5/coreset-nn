@@ -131,9 +131,6 @@ class PointEncoder(nn.Module):
     def __init__(self, input_dim, embed_dim, mlp_hdim, mlp_out_dim, mlp_layers, phi_hdim, phi_out_dim, phi_layers, batchnorm=False, mean=False, use_max=False, activation=nn.LeakyReLU):
         super(PointEncoder, self).__init__()
 
-        print(f"input_dim: {input_dim}, mlp_hdim: {mlp_hdim}, mlp_layers: {mlp_layers}, embed_dim: {embed_dim}")
-
-
         self.mlp = MLP(input_dim, *[mlp_hdim]*mlp_layers, embed_dim, batchnorm=batchnorm, activation = activation)
         self.phi = MLP(embed_dim, *[phi_hdim]*phi_layers, phi_out_dim, batchnorm = batchnorm, activation = activation)
 
@@ -142,14 +139,30 @@ class PointEncoder(nn.Module):
     
     def forward(self, input):
         
+
         out = self.mlp(input)
         if self.mean:
             out = torch.mean(out, dim=0)
         elif self.max:
             out = torch.max(out, dim=0)[0]
         else:
-            out = torch.sum(out, dim=0)
+
+            data = out.data #todo: does this preserve the computational graph
+            ptr1 = out.ptr1  # Tensor indicating the offsets for each batch
+            aggregated_results = []
+
+            for start, end in zip(ptr1[:-1], ptr1[1:]):
+                batch_data = data[start:end]  # Slice rows corresponding to the current batch
+                aggregated_results.append(torch.sum(batch_data, dim=0))  # Apply aggregation
+
+            out = torch.stack(aggregated_results)
+            
+
+            # out = torch.sum(out, dim=0)
+
         out = self.phi(out)
+       
+
         return out
     
 class ConvexHullNN(nn.Module):
@@ -180,10 +193,10 @@ class ConvexHullNN(nn.Module):
         
         return out
 
-    def get_approx_chull(self, x: Tensor|Batch):
+    def get_approx_chull(self, probabilities, x: Tensor|Batch):
 
         
-        probabilities = x.view(-1, 50, x.data.size(-1)) #TODO: hardcoding meb ptset size = 50 
+        probabilities = probabilities.view(-1, 50, probabilities.data.size(-1)) #TODO: hardcoding meb ptset size = 50 
         probabilities = F.softmax(probabilities, dim=1)
         probabilities = probabilities.view(-1, probabilities.data.size(-1))
         
@@ -197,9 +210,12 @@ class ConvexHullNN(nn.Module):
             hull_approx = torch.mm(ptset_probs.T, ptset)
             hulls.append(hull_approx)
             start = end
-        
-        hulls = torch.stack(hulls)
-        print(hulls.shape)
+          
+   
+        # # out =  Batch.from_batched(hulls, n_nodes = x.n_nodes, order = 1)
+        # # print(out.data.shape)
+        # print(len(hulls))
+        # print(len(hulls[0]))
         return hulls
 
 
@@ -266,11 +282,16 @@ class EncoderProcessDecoder(nn.Module):
                 processor_layer, processor_configs, processor_path, 
                 decoder_layer=None, decoder_configs=None, **config):
         super(EncoderProcessDecoder, self).__init__()
+        self.processor_path = processor_path
 
         self.encoder = MLP(input_dim, *[encoder_width]*encoder_depth, encoder_output_dim, 
                             batchnorm=False, activation=nn.LeakyReLU)
         self.processor = globals()[processor_layer](**processor_configs)
-        self.processor.load_state_dict(torch.load(processor_path))
+        if processor_path is not None:
+            self.processor.load_state_dict(torch.load(processor_path))
+        else:
+            print('processor unfrozen')
+        
 
 
         activation_mapping = {
@@ -283,7 +304,9 @@ class EncoderProcessDecoder(nn.Module):
 
     def forward(self, x: Tensor | Batch):
         out = self.encoder(x)  # Pass input through the encoder
-        out = self.processor(out)
-        out = self.processor.get_approx_chull(out)  # compute convex hull with processor
+        encoded_pts = out # storing encoded points before processor
+        out = self.processor(out) #shape: [ptset_size * batch_size, od]
+        
+        out = Batch.from_list(self.processor.get_approx_chull(out, encoded_pts), order = 1) #shape: [od * batch_size, input_dim]
         out = self.decoder(out)
         return out
