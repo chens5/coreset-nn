@@ -213,24 +213,25 @@ def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_g
     model = globals()[modeltype](**config)
     model.to(device)
 
+
     # Freeze processor weights, todo:
-    if args.processor_path is not None:
+    if model.processor_path is not None:
         print('freezing processor')
         for param in model.processor.parameters():
             param.requires_grad = False
 
+        trainable_params = list(model.encoder.parameters()) + list(model.decoder.parameters()) #only encoder and decoder params
+
+        # Initialize optimizer
+        optimizer = Adam(trainable_params, lr=lr)
+
     else:
         print('processor unfrozen')
 
-    trainable_params = list(model.encoder.parameters()) + list(model.decoder.parameters()) #only encoder and decoder params
-
-    # Initialize optimizer
-    optimizer = Adam(trainable_params, lr=lr)
+        # Initialize optimizer
+        optimizer = Adam(model.parameters(), lr=lr)
 
 
-
-    # Initialize optimizer
-    optimizer = Adam(model.parameters(), lr=lr)
     record_dir = os.path.join(log_dir, 'record/')
 
     # Initialize logs
