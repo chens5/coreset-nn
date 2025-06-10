@@ -13,6 +13,7 @@ from torch_geometric.nn.aggr import Aggregation
 from torch_geometric.nn.resolver import aggregation_resolver
 from torch_geometric.nn.pool import global_max_pool
 from .data_representation import Batch
+from .transformer import *
 
 
 class GlobalEmbedding(nn.Module):
@@ -166,10 +167,11 @@ class PointEncoder(nn.Module):
         return out
     
 class ConvexHullNN(nn.Module):
-    def __init__(self, input_dim, embedding_dim, hidden_dim, output_dim, depth, *args):
+    def __init__(self, input_dim, embedding_dim, hidden_dim, output_dim, depth, aggregation="mean", *args):
         super().__init__()
         self.initial = nn.Linear(in_features=input_dim, out_features=embedding_dim)
-        self.sumformer = Sumformer(num_blocks=depth, input_dim = embedding_dim, hidden_dim=hidden_dim)
+        self.sumformer = Sumformer(num_blocks=depth, input_dim = embedding_dim, hidden_dim=hidden_dim, 
+                                    aggregation=aggregation)
         # self.ff1 = nn.Linear(in_features = embedding_dim, out_features=output_dim) #old feedforward
         self.mlp = nn.Sequential(
             nn.Linear(embedding_dim, hidden_dim),
@@ -195,8 +197,9 @@ class ConvexHullNN(nn.Module):
 
     def get_approx_chull(self, probabilities, x: Tensor|Batch):
 
+        n = x.n_nodes[0].item() #todo: assuming constant ptset size throughout batch
         
-        probabilities = probabilities.view(-1, 50, probabilities.data.size(-1)) #TODO: hardcoding meb ptset size = 50 
+        probabilities = probabilities.view(-1, n, probabilities.data.size(-1))
         probabilities = F.softmax(probabilities, dim=1)
         probabilities = probabilities.view(-1, probabilities.data.size(-1))
         
@@ -217,6 +220,58 @@ class ConvexHullNN(nn.Module):
         # print(len(hulls))
         # print(len(hulls[0]))
         return hulls
+
+class ConvexHullNN_L1(ConvexHullNN):
+    def get_approx_chull(self, probabilities, x: Tensor|Batch):
+
+        n = x.n_nodes[0].item() #todo: assuming constant ptset size throughout batch
+        
+        probabilities = probabilities.view(-1, n, probabilities.data.size(-1))
+        probabilities = F.leaky_relu(probabilities) ##only for L1 norm
+        probabilities = F.normalize(probabilities, p = 1.0, dim = 1)
+        probabilities = probabilities.view(-1, probabilities.data.size(-1))
+        
+        hulls = []
+        start = 0
+        for num in x.n_nodes:
+            end = start + num
+            ptset = x.data[start:end]
+            ptset_probs = probabilities.data[start:end]
+            # print(f'probs (from softmax): {ptset_probs}')
+            hull_approx = torch.mm(ptset_probs.T, ptset)
+            hulls.append(hull_approx)
+            start = end
+          
+        return hulls
+
+
+class ConvexHullNNIndicator(nn.Module):
+    def __init__(self, input_dim, embedding_dim, hidden_dim, depth, *args):
+        super().__init__()
+        # embed each point
+        self.initial = nn.Linear(in_features=input_dim, out_features=embedding_dim)
+        self.sumformer = Sumformer(num_blocks=depth,
+                                   input_dim=embedding_dim,
+                                   hidden_dim=hidden_dim)
+
+        self.mlp = nn.Sequential(
+                nn.Linear(embedding_dim, hidden_dim),
+                nn.LeakyReLU(),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.LeakyReLU(),
+                nn.Linear(hidden_dim, 2)  # 2 logits per point: class 0 (not in kernel) and class 1 (in kernel)
+            )
+        
+    def forward(self, x: Tensor|Batch):
+        out = self.initial(x)
+        out = self.sumformer(out)   # (total_nodes, embedding_dim)
+        logits = self.mlp(out)      # (total_nodes, 1)
+        
+        B = len(x.n_nodes)
+        N = x.n_nodes[0].item()
+        logits = logits.view(B, N, 2)
+        
+        return logits
 
 
 class ConvexHullNN_new(nn.Module):
@@ -288,17 +343,21 @@ class EncoderProcessDecoder(nn.Module):
                             batchnorm=False, activation=nn.LeakyReLU)
         self.processor = globals()[processor_layer](**processor_configs)
         if processor_path is not None:
-            self.processor.load_state_dict(torch.load(processor_path))
+            self.processor.load_state_dict(torch.load(processor_path, map_location = 'cpu'))
         else:
             print('processor unfrozen')
         
 
-
+        
         activation_mapping = {
             'nn.LeakyReLU': nn.LeakyReLU,
             'nn.ReLU': nn.ReLU
         }
-        decoder_configs['activation'] = activation_mapping[decoder_configs['activation']]
+
+        #accounting for inconsistently formatted yaml files in training, todo: fix
+        if isinstance(decoder_configs['activation'], str):
+            decoder_configs['activation'] = activation_mapping[decoder_configs['activation']]
+        
 
         self.decoder = globals()[decoder_layer](**decoder_configs)
 
@@ -306,7 +365,14 @@ class EncoderProcessDecoder(nn.Module):
         out = self.encoder(x)  # Pass input through the encoder
         encoded_pts = out # storing encoded points before processor
         out = self.processor(out) #shape: [ptset_size * batch_size, od]
-        
         out = Batch.from_list(self.processor.get_approx_chull(out, encoded_pts), order = 1) #shape: [od * batch_size, input_dim]
+        out = self.decoder(out)
+        return out
+
+class ShapeFittingBaseline(EncoderProcessDecoder):
+    def forward(self, x: Tensor | Batch):
+        out = self.encoder(x)
+        encoded_pts = out
+        out = self.processor(out)
         out = self.decoder(out)
         return out
