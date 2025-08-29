@@ -58,7 +58,7 @@ def npz_to_batches(raw_data, batch_size=128):
     return batch_list, gt_list
 
 
-def json_to_batches(raw_data, batch_size=128):
+def json_to_batches_annulus(raw_data, batch_size=128):
     batch_list = []
     ground_truth_list = []  # List for single-vector ground truth
     in_batch = []
@@ -67,14 +67,15 @@ def json_to_batches(raw_data, batch_size=128):
 
     for i in range(len(raw_data)):
         # Extract point set, center, and radius
-        ptset = raw_data[i]['pointset']
-        center = raw_data[i]['meb_center']  # List of d values
-        radius = raw_data[i]['meb_radius']  # Scalar value
+        ptset = raw_data[i]['Pointset']
+        center = raw_data[i]['Center']  # List of d values
+        radius_1 = raw_data[i]['Inner radius']  # Scalar value
+        radius_2 = raw_data[i]['Outer radius']  # Scalar value
 
         in_batch.append(torch.tensor(ptset, dtype=torch.float))
         
         # Combine center and radius into a single tensor
-        ground_truth = torch.tensor(center + [radius], dtype=torch.float)  # [c1, c2, ..., cd, r]
+        ground_truth = torch.tensor([radius_1, radius_2], dtype=torch.float)  # used to be center + [radius_1, radius_2] -- [c1, c2, ..., cd, r]
         in_batch_ground_truth.append(ground_truth)
         
         # Batch management
@@ -208,7 +209,7 @@ def compute_test_error(model, directions, test_dataloader, test_gt, test_sz, dev
 def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_gt, device, log_dir, epd,
           epochs=100, lr=0.001, activation='LeakyReLU', test_sz = 300, save_freq=20, args=None):
 
-
+    print(lr)
 
     # Initialize model
     model = globals()[modeltype](**config)
@@ -221,10 +222,7 @@ def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_g
         for param in model.processor.parameters():
             param.requires_grad = False
 
-        if model.use_encoder:
-            trainable_params = list(model.encoder.parameters()) + list(model.decoder.parameters()) #only encoder and decoder params
-        else:
-            trainable_params = list(model.decoder.parameters())
+        trainable_params = list(model.encoder.parameters()) + list(model.decoder.parameters()) #only encoder and decoder params
 
         # Initialize optimizer
         optimizer = Adam(trainable_params, lr=lr)
@@ -323,6 +321,8 @@ def main():
     
 
     args = parser.parse_args()
+
+    print(args.lr)
    
 
     # Load data 
@@ -334,8 +334,8 @@ def main():
     
     split_size = int(len(raw_data) * 0.75)
 
-    train_batches, train_gt = json_to_batches(raw_data[:split_size], args.batch_size)
-    test_batches, test_gt = json_to_batches(raw_data[split_size:], args.batch_size)
+    train_batches, train_gt = json_to_batches_annulus(raw_data, args.batch_size)
+    test_batches, test_gt = json_to_batches_annulus(raw_data[split_size:], args.batch_size)
 
    
 
@@ -363,8 +363,8 @@ def main():
 
 
         output = train(args.layer_type, config, train_batches, train_gt, 
-                    test_batches, test_gt, args.device, log_dir, 
-                    epochs=args.epochs, epd = args.epd, save_freq = 20, args=args) #added save_freq and args
+                    test_batches, test_gt, args.device, log_dir, lr = args.lr,
+                    epochs=args.epochs, epd = args.epd, save_freq = 10_000, args=args) #added save_freq and args
         
         loss_data.append({'modelname':modelname, 'loss':output})
 

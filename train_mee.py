@@ -58,7 +58,7 @@ def npz_to_batches(raw_data, batch_size=128):
     return batch_list, gt_list
 
 
-def json_to_batches(raw_data, batch_size=128):
+def json_to_batches_mee(raw_data, batch_size=128):
     batch_list = []
     ground_truth_list = []  # List for single-vector ground truth
     in_batch = []
@@ -68,18 +68,21 @@ def json_to_batches(raw_data, batch_size=128):
     for i in range(len(raw_data)):
         # Extract point set, center, and radius
         ptset = raw_data[i]['pointset']
-        center = raw_data[i]['meb_center']  # List of d values
-        radius = raw_data[i]['meb_radius']  # Scalar value
+        center = raw_data[i]['center']  # List of d values
+        radius_1 = raw_data[i]['major_radius']  # Scalar value
+        radius_2 = raw_data[i]['minor_radius']  # Scalar value
+        angle = raw_data[i]['angle']  # Real value
 
         in_batch.append(torch.tensor(ptset, dtype=torch.float))
         
         # Combine center and radius into a single tensor
-        ground_truth = torch.tensor(center + [radius], dtype=torch.float)  # [c1, c2, ..., cd, r]
+        # ground_truth = torch.tensor(center + [radius_1, radius_2, angle], dtype=torch.float)  # [c1, c2, ..., cd, r]
+        ground_truth = torch.tensor([radius_1, radius_2, angle], dtype=torch.float)
         in_batch_ground_truth.append(ground_truth)
         
         # Batch management
         if (count != 0 and count % (batch_size - 1) == 0) or i == len(raw_data) - 1:
-            batch = Batch.from_list(in_batch, order=1)  # Your custom Batch object
+            batch = Batch.from_list(in_batch, order=1)
             batch_list.append(batch)
             ground_truth_list.append(torch.stack(in_batch_ground_truth))  # Stack tensors into one batch
             
@@ -159,51 +162,50 @@ def cross_entropy_loss():
 
 def compute_test_error(model, directions, test_dataloader, test_gt, test_sz, device='cuda:0'):
     return None
-    # try:
-    #     count = 0
-    #     loss = 0
-    #     for batch in test_dataloader:
-    #         batch = batch.to(device)
 
-    #         if isinstance(model, ConvexHullEncoderTransformer):
-    #             out, attn_maps = model(batch)
-    #             #reshaping to apply softmax setwise
-    #             out = out.data.view(-1, 25, out.data.size(-1)) #todo: hardcoding ptset size
-    #             out = F.softmax(out, dim=1)
-    #             out = out.view(-1, out.size(-1))
+def weighted_mse_loss(pred, target, angle_weight=5.0):
+    # pred and target are of shape [batch_size, d+3]
+    d = pred.shape[1] - 3  # infer spatial dimension
 
-    #             hulls = Batch.from_list(get_approx_chull(out, batch), order = 1).to(device)
-        
-    #             loss += direction_loss(hulls, batch, directions=directions, in_dim = 2, device = device).detach() #todo: hardcoding input_dim
-                
+    pred_angle = pred[:, -1]
+    target_angle = target[:, -1]
 
-    #         if isinstance(model, ConvexHullNN) or isinstance(model, ConvexHullNNTransformer):
-    #             out = model(batch) #old model
+    pred_angle = torch.remainder(pred[:, -1], 2 * np.pi)
+    target_angle = torch.remainder(target[:, -1], 2 * np.pi)
 
-    #             #reshaping to apply softmax setwise
-    #             out = out.data.view(-1, 25, out.data.size(-1)) #todo: hardcoding ptset size
-    #             out = F.softmax(out, dim=1)
-    #             out = out.view(-1, out.size(-1))
+    center_loss = F.mse_loss(pred[:, :d], target[:, :d], reduction='none')  # shape [batch_size, d]
+    minor_loss = F.mse_loss(pred[:, d], target[:, d], reduction='none')    # shape [batch_size]
+    major_loss = F.mse_loss(pred[:, d+1], target[:, d+1], reduction='none')# shape [batch_size]
+    angle_loss = F.mse_loss(pred_angle, target_angle, reduction='none')  # shape [batch_size]
 
-    #             hulls = Batch.from_list(get_approx_chull(out, batch), order = 1).to(device)
-        
-    #             loss += direction_loss(hulls, batch, directions=directions, in_dim = 2, device = device).detach() #todo: hardcoding in_dim
+    # Sum center loss across the d coordinates
+    center_loss = center_loss.sum(dim=1)  # shape [batch_size]
 
-    #         else:
-    #             out = model(batch)
-    #             batch_size = int(batch.data.shape[0] / 50) #hardcoding ptset_size
-    #             n_nodes = torch.full((batch_size,), 50).to(device) #hardcoding output_dim for now
-    #             out =  Batch.from_batched(out, n_nodes = n_nodes, order = 1)
+    # Combine all loss terms
+    total_loss = center_loss + minor_loss + major_loss + angle_weight * angle_loss
 
-    #             loss = mse #todo: copy mse
+    # Return mean over the batch
+    return total_loss.mean()
 
+def weighted_mse_loss_angle(pred, target, angle_weight=5.0):
+    # pred and target are of shape [batch_size, d+3]
+    d = pred.shape[1] - 3  # infer spatial dimension
 
-    #         count += 1
-    #     loss = loss/test_sz
-    #     return loss
-    # except:
-    #     return None
+    # Extract and wrap angles to [0, 2π)
+    pred_angle = torch.remainder(pred[:, -1], 2 * np.pi)
+    target_angle = torch.remainder(target[:, -1], 2 * np.pi)
 
+    # Angle loss (circular)
+    angle_loss = ((torch.sin(pred_angle) - torch.sin(target_angle)) ** 2 +
+                  (torch.cos(pred_angle) - torch.cos(target_angle)) ** 2)
+
+    # Other losses
+    center_loss = F.mse_loss(pred[:, :d], target[:, :d], reduction='none').sum(dim=1)
+    minor_loss = F.mse_loss(pred[:, d], target[:, d], reduction='none')
+    major_loss = F.mse_loss(pred[:, d+1], target[:, d+1], reduction='none')
+
+    total_loss = center_loss + minor_loss + major_loss + angle_weight * angle_loss
+    return total_loss.mean()
 
 def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_gt, device, log_dir, epd,
           epochs=100, lr=0.001, activation='LeakyReLU', test_sz = 300, save_freq=20, args=None):
@@ -221,10 +223,7 @@ def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_g
         for param in model.processor.parameters():
             param.requires_grad = False
 
-        if model.use_encoder:
-            trainable_params = list(model.encoder.parameters()) + list(model.decoder.parameters()) #only encoder and decoder params
-        else:
-            trainable_params = list(model.decoder.parameters())
+        trainable_params = list(model.encoder.parameters()) + list(model.decoder.parameters()) #only encoder and decoder params
 
         # Initialize optimizer
         optimizer = Adam(trainable_params, lr=lr)
@@ -251,18 +250,6 @@ def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_g
 
     writer = SummaryWriter(log_dir=record_dir)
 
-    # if not epd:
-    # # generating evenly spaced directions -- hardcoding for 2d
-    # angles = np.linspace(0, 2 * np.pi, 100, endpoint=False)
-    # x = np.cos(angles)
-    # y = np.sin(angles)
-
-    # x_tensor = torch.tensor(x)
-    # y_tensor = torch.tensor(y)
-    # directions = torch.stack([x_tensor, y_tensor], dim=1)
-    # directions = directions.t().float().to(device)
-    # directions = None
-
     criterion = nn.MSELoss()
 
     for epoch in trange(epochs):
@@ -278,9 +265,10 @@ def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_g
 
             out = model(batch)
 
-            # print(f'out shape: {out.data.shape}') #incorrect, should be [128, 4]
-            # print(f'gt shape: {gt.data.shape}')
+            # loss = weighted_mse_loss(out, gt, angle_weight=10.0) ## for weighted mse
+            # loss = weighted_mse_loss_angle(out, gt, angle_weight=3.0) ##for angle loss
             loss = criterion(out, gt)
+
 
            
             total_loss += loss.detach()
@@ -334,8 +322,8 @@ def main():
     
     split_size = int(len(raw_data) * 0.75)
 
-    train_batches, train_gt = json_to_batches(raw_data[:split_size], args.batch_size)
-    test_batches, test_gt = json_to_batches(raw_data[split_size:], args.batch_size)
+    train_batches, train_gt = json_to_batches_mee(raw_data[:split_size], args.batch_size)
+    test_batches, test_gt = json_to_batches_mee(raw_data[split_size:], args.batch_size)
 
    
 
