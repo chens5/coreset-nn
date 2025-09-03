@@ -92,6 +92,14 @@ def define_model_direct_extent(params, fp):
     model.load_state_dict(torch.load(state_dict_path), strict = False)
     return model
 
+def define_model_direct_extent_tf(params, fp):
+    model = ShapeFittingDirectTransformer(**params)
+    
+    state_dict_path = os.path.join(fp, 'final_model.pt')
+    
+    model.load_state_dict(torch.load(state_dict_path), strict = False)
+    return model
+
 
 def make_preds(batches, gt, model, device = 'cpu'):
     preds = []
