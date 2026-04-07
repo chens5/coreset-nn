@@ -20,6 +20,8 @@ from logging import getLogger; log = getLogger(__name__)
 import torch
 from torch import Tensor, LongTensor
 import torch.nn.functional as F
+import torch.nn as nn
+from torch.nn import AdaptiveMaxPool1d as nnAdaptiveMaxPool1d
 from dataclasses import dataclass
 
 def ptr_from_sizes(size: Tensor) -> Tensor:
@@ -278,6 +280,31 @@ class Batch:
     def multiply_prob(self, p):
         return 0
 
+    def apply_max_pool1d(self, max_pool):
+        """
+        Applies AdaptiveMaxPool1d to each tensor in the batch.
+        
+        Parameters:
+        - output_size: The size of the output after pooling.
+
+        Returns:
+        - A new Batch object with pooled data.
+        """
+        # max_pool = nn.AdaptiveMaxPool1d(output_size=output_size)
+        pooled_data = []
+
+        # Split and apply pooling
+        for tensor in self.batch_split():
+            # print(tensor.shape)
+            pooled_tensor = max_pool(tensor)  # Apply max pooling
+            # print(pooled_tensor.shape)
+            pooled_data.append(pooled_tensor)  # Remove batch dimension
+
+        # Concatenate pooled data
+        pooled_data = torch.cat(pooled_data, dim=0)
+        
+        return Batch.from_batched(pooled_data, self.n_nodes, self.order)
+
     HANDLED_FUNCTIONS: ClassVar[dict[Callable, None|Callable[..., bool]]] = {
         torch.add: None, 
         F.layer_norm: None, 
@@ -290,7 +317,10 @@ class Batch:
         torch.sigmoid: None,
         torch.gt: None, 
         torch.mul: None,
-        F.softmax: None
+        F.softmax: None,
+        F.adaptive_max_pool1d: None,
+        torch.nn.AdaptiveMaxPool1d: None,
+        torch.matmul: None
         }
 
     @classmethod
@@ -338,10 +368,23 @@ class Batch:
         order = orders[0]
         
         ##############################actual call
+
+        # if func == torch.matmul:
+        #     # Custom logic for torch.matmul
+        #     data1, data2 = new_args
+        #     # Ensure tensors are batch-aware
+        #     if isinstance(data1, Batch):
+        #         data1 = data1.data
+        #     if isinstance(data2, Batch):
+        #         data2 = data2.data
+        #     result_data = torch.matmul(data1, data2)
+        #     return Batch(data=result_data, order=order, indicator=indicator)
+
+        
         result_data = func(*new_args, **new_kwargs)
 
         ##############################return
-        assert result_data.ndim == 2
+        # assert result_data.ndim == 2
         return cls(data=result_data, order=order, indicator=indicator)
 
     def __add__(self, b):
@@ -355,6 +398,24 @@ class Batch:
 
     def to(self, *args, **kwargs):
         return type(self)(data=self.data.to(*args, **kwargs), order=self.order, indicator=self.indicator.to(*args, **kwargs))
+
+
+    # added methods
+    def unsqueeze(self, dim: int):
+        return type(self)(data=self.data.unsqueeze(dim), order=self.order, indicator=self.indicator)
+
+    def squeeze(self, dim: int = None):
+        return type(self)(data=self.data.squeeze(dim), order=self.order, indicator=self.indicator)
+
+    def transpose(self, dim0: int, dim1: int):
+        return type(self)(data=self.data.transpose(dim0, dim1), order=self.order, indicator=self.indicator)
+    
+    def view(self, *shape):
+        return type(self)(data=self.data.view(*shape), order=self.order, indicator=self.indicator)
+
+    def permute(self, *dims):
+        return type(self)(data=self.data.permute(*dims), order=self.order, indicator=self.indicator)
+
 
     @property
     def T(self):

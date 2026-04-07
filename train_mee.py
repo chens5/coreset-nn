@@ -7,11 +7,11 @@ from eval_utils import directional_width, directional_err
 
 from torch.optim import Adam
 
-from torch.nn import CrossEntropyLoss, NLLLoss
+from torch.nn import CrossEntropyLoss, NLLLoss, MSELoss
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from geotorch.sphere import uniform_init_sphere_ as unif_sphere
 from scipy.spatial.distance import directed_hausdorff
-
 
 import argparse
 import os
@@ -58,37 +58,41 @@ def npz_to_batches(raw_data, batch_size=128):
     return batch_list, gt_list
 
 
-def json_to_batches(raw_data, batch_size=128):
-
+def json_to_batches_mee(raw_data, batch_size=128):
     batch_list = []
-    center_list = []
-    radius_list = []
-    in_batch =[]
-    in_batch_center = []
-    in_batch_radius = []
+    ground_truth_list = []  # List for single-vector ground truth
+    in_batch = []
+    in_batch_ground_truth = []
     count = 0
 
     for i in range(len(raw_data)):
+        # Extract point set, center, and radius
         ptset = raw_data[i]['pointset']
-        center = raw_data[i]['meb_center']
-        radius = raw_data[i]['meb_radius']
-        
+        center = raw_data[i]['center']  # List of d values
+        radius_1 = raw_data[i]['major_radius']  # Scalar value
+        radius_2 = raw_data[i]['minor_radius']  # Scalar value
+        angle = raw_data[i]['angle']  # Real value
+
         in_batch.append(torch.tensor(ptset, dtype=torch.float))
-        in_batch_center.append(center)
-        in_batch_radius.append(radius)
         
-        if (count != 0 and count % (batch_size-1) == 0) or i == len(raw_data) - 1:
-            batch = Batch.from_list(in_batch, order = 1)
+        # Combine center and radius into a single tensor
+        # ground_truth = torch.tensor(center + [radius_1, radius_2, angle], dtype=torch.float)  # [c1, c2, ..., cd, r]
+        ground_truth = torch.tensor([radius_1, radius_2, angle], dtype=torch.float)
+        in_batch_ground_truth.append(ground_truth)
+        
+        # Batch management
+        if (count != 0 and count % (batch_size - 1) == 0) or i == len(raw_data) - 1:
+            batch = Batch.from_list(in_batch, order=1)
             batch_list.append(batch)
-            center_list.append(in_batch_center)
-            radius_list.append(in_batch_radius)
+            ground_truth_list.append(torch.stack(in_batch_ground_truth))  # Stack tensors into one batch
             
+            # Reset temporary lists
             in_batch = []
-            in_batch_center = []
-            in_batch_radius = []
+            in_batch_ground_truth = []
+
         count += 1
 
-    return batch_list, center_list, radius_list
+    return batch_list, ground_truth_list
 
 def get_approx_chull(probabilities, batch):
     hulls = []
@@ -97,9 +101,7 @@ def get_approx_chull(probabilities, batch):
         end = start + num
         ptset = batch.data[start:end]
         ptset_probs = probabilities.data[start:end]
-        # print(f'probs (from softmax): {ptset_probs.max()}')
-        # print(f'max prob (from L1): {ptset_probs.max()}')
-
+        # print(f'probs (from softmax): {ptset_probs}')
         hull_approx = torch.mm(ptset_probs.T, ptset)
         hulls.append(hull_approx)
         start = end
@@ -159,67 +161,80 @@ def cross_entropy_loss():
     return 0
 
 def compute_test_error(model, directions, test_dataloader, test_gt, test_sz, device='cuda:0'):
-    try:
-        count = 0
-        loss = 0
-        for batch in test_dataloader:
-            batch = batch.to(device)
+    return None
 
-            if isinstance(model, ConvexHullEncoderTransformer):
-                continue
-                # out, attn_maps = model(batch)
-                # #reshaping to apply softmax setwise
-                # out = out.data.view(-1, 25, out.data.size(-1)) #todo: hardcoding ptset size
-                # out = F.softmax(out, dim=1)
-                # out = out.view(-1, out.size(-1))
+def weighted_mse_loss(pred, target, angle_weight=5.0):
+    # pred and target are of shape [batch_size, d+3]
+    d = pred.shape[1] - 3  # infer spatial dimension
 
-                # hulls = Batch.from_list(get_approx_chull(out, batch), order = 1).to(device)
-        
-                # loss += direction_loss(hulls, batch, directions=directions, in_dim = 2, device = device).detach() #todo: hardcoding input_dim
-                
+    pred_angle = pred[:, -1]
+    target_angle = target[:, -1]
 
-            if isinstance(model, ConvexHullNN) or isinstance(model, ConvexHullNNTransformer):
-                out = model(batch) #old model
-                n = batch.n_nodes[0].item()
+    pred_angle = torch.remainder(pred[:, -1], 2 * np.pi)
+    target_angle = torch.remainder(target[:, -1], 2 * np.pi)
 
-                #reshaping to apply softmax setwise
-                out = out.data.view(-1, n, out.data.size(-1))
-                out = F.softmax(out, dim=1)
-                out = out.view(-1, out.size(-1))
+    center_loss = F.mse_loss(pred[:, :d], target[:, :d], reduction='none')  # shape [batch_size, d]
+    minor_loss = F.mse_loss(pred[:, d], target[:, d], reduction='none')    # shape [batch_size]
+    major_loss = F.mse_loss(pred[:, d+1], target[:, d+1], reduction='none')# shape [batch_size]
+    angle_loss = F.mse_loss(pred_angle, target_angle, reduction='none')  # shape [batch_size]
 
-                hulls = Batch.from_list(get_approx_chull(out, batch), order = 1).to(device)
+    # Sum center loss across the d coordinates
+    center_loss = center_loss.sum(dim=1)  # shape [batch_size]
 
-                print(out.data.shape)
-        
-                loss += direction_loss(hulls, batch, directions=directions, in_dim = 2, device = device).detach() #todo: hardcoding in_dim
+    # Combine all loss terms
+    total_loss = center_loss + minor_loss + major_loss + angle_weight * angle_loss
 
-            else:
-                continue
-                # out = model(batch)
-                # batch_size = int(batch.data.shape[0] / 25) #hardcoding ptset_size
-                # n_nodes = torch.full((batch_size,), 25).to(device) #hardcoding output_dim for now
-                # out =  Batch.from_batched(out, n_nodes = n_nodes, order = 1)
+    # Return mean over the batch
+    return total_loss.mean()
 
-                # loss = direction_loss(out, batch, directions=directions, n=50, in_dim=5, device = device) #todo: hardcoding in_dim 
+def weighted_mse_loss_angle(pred, target, angle_weight=5.0):
+    # pred and target are of shape [batch_size, d+3]
+    d = pred.shape[1] - 3  # infer spatial dimension
 
+    # Extract and wrap angles to [0, 2π)
+    pred_angle = torch.remainder(pred[:, -1], 2 * np.pi)
+    target_angle = torch.remainder(target[:, -1], 2 * np.pi)
 
-            count += 1
-        loss = loss/test_sz
-        return loss
-    except:
-        return None
+    # Angle loss (circular)
+    angle_loss = ((torch.sin(pred_angle) - torch.sin(target_angle)) ** 2 +
+                  (torch.cos(pred_angle) - torch.cos(target_angle)) ** 2)
 
+    # Other losses
+    center_loss = F.mse_loss(pred[:, :d], target[:, :d], reduction='none').sum(dim=1)
+    minor_loss = F.mse_loss(pred[:, d], target[:, d], reduction='none')
+    major_loss = F.mse_loss(pred[:, d+1], target[:, d+1], reduction='none')
+
+    total_loss = center_loss + minor_loss + major_loss + angle_weight * angle_loss
+    return total_loss.mean()
 
 def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_gt, device, log_dir, epd,
-          epochs=100, lr=0.001, activation='LeakyReLU', test_sz = 300, save_freq=100):
+          epochs=100, lr=0.001, activation='LeakyReLU', test_sz = 300, save_freq=20, args=None):
+
+
 
     # Initialize model
     model = globals()[modeltype](**config)
-    print(model)
     model.to(device)
 
-    # Initialize optimizer
-    optimizer = Adam(model.parameters(), lr=lr)
+
+    # Freeze processor weights, todo:
+    if model.processor_path is not None:
+        print('freezing processor')
+        for param in model.processor.parameters():
+            param.requires_grad = False
+
+        trainable_params = list(model.encoder.parameters()) + list(model.decoder.parameters()) #only encoder and decoder params
+
+        # Initialize optimizer
+        optimizer = Adam(trainable_params, lr=lr)
+
+    else:
+        print('processor unfrozen')
+
+        # Initialize optimizer
+        optimizer = Adam(model.parameters(), lr=lr)
+
+
     record_dir = os.path.join(log_dir, 'record/')
 
     # Initialize logs
@@ -235,69 +250,27 @@ def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_g
 
     writer = SummaryWriter(log_dir=record_dir)
 
-    # if not epd:
-    # # generating evenly spaced directions -- hardcoding for 2d
-    angles = np.linspace(0, 2 * np.pi, 100, endpoint=False)
-    x = np.cos(angles)
-    y = np.sin(angles)
-
-    x_tensor = torch.tensor(x)
-    y_tensor = torch.tensor(y)
-    directions = torch.stack([x_tensor, y_tensor], dim=1)
-    directions = directions.t().float().to(device)
-    #directions = None #uncomment for d>2
+    criterion = nn.MSELoss()
 
     for epoch in trange(epochs):
         count = 0
         total_loss = 0.0
 
 
-        for batch in train_dataloader:
+        for batch, gt in zip(train_dataloader, train_gt):
 
             optimizer.zero_grad()
             batch = batch.to(device)
-
-
-
-            # if epd:
-            #     # if isinstance(model, ConvexHullEncoderTransformer):
-            #     #     out, attn_maps = model(batch)
-            #     #     print(out.data.requires_grad)
-            #     # else:
-            #     out = model(batch)
-            #     out = out.view(-1, 25, out.data.size(-1))
-            #     out = F.softmax(out, dim=1)
-            #     out = out.view(-1, out.data.size(-1))
-
-            #     hulls = Batch.from_list(get_approx_chull(out, batch), order = 1).to(device)
-                
-            #     loss = direction_loss(hulls, batch, directions=directions, n=200, in_dim=2, device = device) #todo: hardcoding in_dim
-
-
-
-            # elif isinstance(model, ConvexHullNN) or isinstance(model, ConvexHullNNTransformer):
-
-
+            gt = gt.to(device)
 
             out = model(batch)
-            # if isinstance(model, ConvexHullNNTransformer):
-            #     out, attn_maps = model(batch)
-            # else:
-            #     out = model(batch)
 
-            #reshaping to apply softmax setwise
-            n = batch.n_nodes[0].item() #todo: assuming pointsets in batch have same size (holds for our data)
-            out = out.view(-1, n, out.data.size(-1))
-            # print((out.data < 0).all())
-            out = F.softmax(out, dim=1)
-
-            out = out.view(-1, out.data.size(-1))
+            # loss = weighted_mse_loss(out, gt, angle_weight=10.0) ## for weighted mse
+            # loss = weighted_mse_loss_angle(out, gt, angle_weight=3.0) ##for angle loss
+            loss = criterion(out, gt)
 
 
-            hulls = Batch.from_list(get_approx_chull(out, batch), order = 1).to(device) #[128 * 16, 2]
-            
-            loss = direction_loss(hulls, batch, directions=directions, n=100, in_dim=2, device = device) #todo: hardcoding in_dim
-                
+           
             total_loss += loss.detach()
             loss.backward()
             optimizer.step()
@@ -309,28 +282,13 @@ def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_g
         if epoch % save_freq == 0:
             path = os.path.join(record_dir, f'model_{epoch}.pt')
             torch.save(model.state_dict(), path)
-
-            #saving output
-            # gen_model_output(model, train_dataloader, test_dataloader, log_dir, epoch, device)
-
-            # hulls = [tensor.cpu().detach().numpy() for tensor in get_approx_chull(out, batch)]
-            # print(np.array(hulls))
-            
-            # model_output_dir = os.path.join(log_dir, 'output')
-            # if not os.path.exists(model_output_dir):
-            #     os.makedirs(model_output_dir)
-            # np.save(os.path.join(model_output_dir, f'chull_test_e{epoch}'), np.array(hulls))
-            # print('output saved')
-            # hulls = [torch.tensor(arr) for arr in hulls]
-            # hulls = Batch.from_list(hulls, order = 1) #casting back to batch
-    
     
     
     path = os.path.join(log_dir, 'final_model.pt')
     print("saving model to:", path)
     torch.save(model.state_dict(), path)
 
-    test_err = compute_test_error(model, directions, test_dataloader, test_gt, 300, device = device)
+    test_err = compute_test_error(model, None, test_dataloader, test_gt, 300, device = device)
     print("test error:", test_err)
 
     return test_err
@@ -347,6 +305,8 @@ def main():
     parser.add_argument('--trial', type=str)
     parser.add_argument('--layer-type', type=str)
     parser.add_argument('--epd', type=lambda x: x.lower() == 'true', default=False, help='Set EPD to True or False')
+    parser.add_argument('--processor-path', type=str, help='Path to pre-trained processor weights')
+
     
     
 
@@ -356,22 +316,18 @@ def main():
     # Load data 
     train_file = os.path.join(output_dir, 'data', args.datafile)
 
+    print(train_file)
 
-
-    # if args.layer_type == 'meb':
-
-    #     raw_data = json.load(open(train_file))
-
-    #     train_batches, train_centers, train_rads = json_to_batches(raw_data[:4000], args.batch_size) #TODO: change dataset size back
-    #     test_batches, test_centers, test_rads = json_to_batches(raw_data[4000:5000], args.batch_size)
-
-    # else:
-    raw_data = np.load(train_file)
+    raw_data = json.load(open(train_file))
+    
     split_size = int(len(raw_data) * 0.75)
 
-    train_batches, train_gt = npz_to_batches(raw_data[:split_size], args.batch_size)
-    test_batches, test_gt = npz_to_batches(raw_data[split_size:], args.batch_size)
+    train_batches, train_gt = json_to_batches_mee(raw_data[:split_size], args.batch_size)
+    test_batches, test_gt = json_to_batches_mee(raw_data[split_size:], args.batch_size)
 
+   
+
+    print(args)
 
     # Load model configs
     with open(args.configs, 'r') as file:
@@ -386,7 +342,7 @@ def main():
         log_dir = format_log_dir(output_dir, 
                                 args.dataset_name, 
                                 modelname, 
-                                'direction', 
+                                'mse', 
                                 args.layer_type,
                                 args.trial)
                                     
@@ -394,10 +350,9 @@ def main():
         print(config)
 
 
-
         output = train(args.layer_type, config, train_batches, train_gt, 
                     test_batches, test_gt, args.device, log_dir, 
-                    epochs=args.epochs, epd = args.epd, save_freq = 100) #added save_freq
+                    epochs=args.epochs, epd = args.epd, save_freq = 20, args=args) #added save_freq and args
         
         loss_data.append({'modelname':modelname, 'loss':output})
 

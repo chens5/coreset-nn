@@ -11,8 +11,10 @@ from .basic import MLP
 from .combinators import ResidualShortcut, Repeat
 from torch_geometric.nn.aggr import Aggregation
 from torch_geometric.nn.resolver import aggregation_resolver
-
+from torch_geometric.nn.pool import global_max_pool
 from .data_representation import Batch
+from .transformer import *
+import time
 
 
 class GlobalEmbedding(nn.Module):
@@ -100,12 +102,15 @@ class SumformerInnerBlock(nn.Module):
         sigma = self.global_embedding(x)
 
         sigma_hiddendim = self.aggreg_linear(sigma) #batch_size, hidden_dim
+        #return here
         x_hiddendim = self.input_linear(x.data) #n_nodes_total, hidden_dim
         
         psi_input = x_hiddendim + sigma_hiddendim[x.batch, :] #n_nodes_total, hidden_dim
         psi_input = F.leaky_relu(psi_input) #n_nodes_total, hidden_dim
 
         return Batch.from_other(self.psi(psi_input), x) #n_nodes_total, input_dim
+
+    #add getter method for aggregation?
 
 class SumformerBlock(nn.Sequential):
     """
@@ -123,16 +128,400 @@ class Sumformer(Repeat):
     def __init__(self, num_blocks: int, *block_args, **block_kwargs):
         make_block = lambda: SumformerBlock(*block_args, **block_kwargs)
         super().__init__(num_blocks, make_block)
+
+class PointEncoder(nn.Module):
+    def __init__(self, input_dim, embed_dim, mlp_hdim, mlp_out_dim, mlp_layers, phi_hdim, phi_out_dim, phi_layers, batchnorm=False, mean=False, use_max=False, activation=nn.LeakyReLU):
+        super(PointEncoder, self).__init__()
+
+        self.mlp = MLP(input_dim, *[mlp_hdim]*mlp_layers, embed_dim, batchnorm=batchnorm, activation = activation)
+        self.phi = MLP(embed_dim, *[phi_hdim]*phi_layers, phi_out_dim, batchnorm = batchnorm, activation = activation)
+
+        self.mean = mean
+        self.max = use_max
+    
+    def forward(self, input):
+        
+
+        out = self.mlp(input)
+        if self.mean:
+            out = torch.mean(out, dim=0)
+        elif self.max:
+            out = torch.max(out, dim=0)[0]
+        else:
+
+            data = out.data #todo: does this preserve the computational graph
+            ptr1 = out.ptr1  # Tensor indicating the offsets for each batch
+            aggregated_results = []
+
+            for start, end in zip(ptr1[:-1], ptr1[1:]):
+                batch_data = data[start:end]  # Slice rows corresponding to the current batch
+                aggregated_results.append(torch.sum(batch_data, dim=0))  # Apply aggregation
+
+            out = torch.stack(aggregated_results)
+            
+
+            # out = torch.sum(out, dim=0)
+
+        out = self.phi(out)
+       
+
+        return out
     
 class ConvexHullNN(nn.Module):
-    def __init__(self, input_dim, embedding_dim, hidden_dim, output_dim, depth, *args):
+    def __init__(self, input_dim, embedding_dim, hidden_dim, output_dim, depth, aggregation="mean", *args):
         super().__init__()
         self.initial = nn.Linear(in_features=input_dim, out_features=embedding_dim)
-        self.sumformer = Sumformer(num_blocks=depth, input_dim = embedding_dim, hidden_dim=hidden_dim)
-        self.final = nn.Linear(in_features = embedding_dim, out_features=output_dim)
-
+        self.sumformer = Sumformer(num_blocks=depth, input_dim = embedding_dim, hidden_dim=hidden_dim, 
+                                    aggregation=aggregation)
+        # self.ff1 = nn.Linear(in_features = embedding_dim, out_features=output_dim) #old feedforward
+        self.mlp = nn.Sequential(
+            nn.Linear(embedding_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, output_dim)
+        )
+        
+       
     def forward(self, x: Tensor|Batch):
         out = self.initial(x)
         out = self.sumformer(out)
-        out = self.final(out)
+        # out = self.ff1(out)
+        # print(f'out data shape (initial): {out.data.shape}')
+        # print(f'indicator shape (initial): {out.batch1.shape}')
+        out = self.mlp(out)
+
+        # print(f'out data shape (forward): {out.data.shape}') [128 * 500, 16]
+        # print(f'indicator shape (forward): {out.batch1.shape}')
+        
         return out
+
+    def get_approx_chull(self, probabilities, x: Tensor|Batch):
+
+        n = x.n_nodes[0].item() #todo: assuming constant ptset size throughout batch
+        
+        probabilities = probabilities.view(-1, n, probabilities.data.size(-1))
+        probabilities = F.softmax(probabilities, dim=1)
+        probabilities = probabilities.view(-1, probabilities.data.size(-1))
+        
+        hulls = []
+        start = 0
+        for num in x.n_nodes:
+            end = start + num
+            ptset = x.data[start:end]
+            ptset_probs = probabilities.data[start:end]
+            # print(f'probs (from softmax): {ptset_probs}')
+            hull_approx = torch.mm(ptset_probs.T, ptset)
+            hulls.append(hull_approx)
+            start = end
+
+        return hulls
+
+class ConvexHullNN_L1(ConvexHullNN):
+    def get_approx_chull(self, probabilities, x: Tensor|Batch):
+
+        n = x.n_nodes[0].item() #todo: assuming constant ptset size throughout batch
+        
+        probabilities = probabilities.view(-1, n, probabilities.data.size(-1))
+        probabilities = F.leaky_relu(probabilities) ##only for L1 norm
+        probabilities = F.normalize(probabilities, p = 1.0, dim = 1)
+        probabilities = probabilities.view(-1, probabilities.data.size(-1))
+        
+        hulls = []
+        start = 0
+        for num in x.n_nodes:
+            end = start + num
+            ptset = x.data[start:end]
+            ptset_probs = probabilities.data[start:end]
+            # print(f'probs (from softmax): {ptset_probs}')
+            hull_approx = torch.mm(ptset_probs.T, ptset)
+            hulls.append(hull_approx)
+            start = end
+          
+        return hulls
+
+class ConvexHullNN_Direct(nn.Module):
+    def __init__(self, input_dim, embedding_dim, hidden_dim, output_dim, depth, aggregation="mean", *args):
+        super().__init__()
+        self.initial = nn.Linear(in_features=input_dim, out_features=embedding_dim)
+        self.sumformer = Sumformer(num_blocks=depth, input_dim = embedding_dim, hidden_dim=hidden_dim, 
+                                    aggregation=aggregation)
+        # self.ff1 = nn.Linear(in_features = embedding_dim, out_features=output_dim) #old feedforward
+        self.mlp = nn.Sequential(
+            nn.Linear(embedding_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, output_dim * input_dim)
+        )
+        self.output_dim = output_dim
+        self.input_dim = input_dim
+        self.embedding_dim = embedding_dim
+
+    def forward(self, x: Tensor|Batch):
+        # print(type(x))
+        out = self.initial(x)
+        out = self.sumformer(out)
+
+        n_nodes_out = torch.full_like(x.n_nodes, fill_value = self.output_dim) ##todo: should this be embedding dim? should it happen later
+
+        out = global_max_pool(x = out.data, batch = x.batch1).squeeze(dim=0) ##pooling setwise
+
+        out =  Batch.from_batched(out, n_nodes = n_nodes_out, order = 1)
+        # print(type(out))
+
+        out = self.mlp(out)
+
+        # print(f'before reshape: {out.data.shape}') #torch.Size([B, K * input_dim])
+
+        out = out.view(-1, self.output_dim, self.input_dim)  # [B, K, input_dim]
+        out = out.view(-1, self.input_dim)  # [B * K, input_dim]
+
+        # print(f'after reshape: {out.data.shape}')
+
+        return out
+        
+
+    def get_approx_chull(self, x: Tensor|Batch):
+
+        return x
+
+
+class ConvexHullNNIndicator(nn.Module):
+    def __init__(self, input_dim, embedding_dim, hidden_dim, depth, *args):
+        super().__init__()
+        # embed each point
+        self.initial = nn.Linear(in_features=input_dim, out_features=embedding_dim)
+        self.sumformer = Sumformer(num_blocks=depth,
+                                   input_dim=embedding_dim,
+                                   hidden_dim=hidden_dim)
+
+        self.mlp = nn.Sequential(
+                nn.Linear(embedding_dim, hidden_dim),
+                nn.LeakyReLU(),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.LeakyReLU(),
+                nn.Linear(hidden_dim, 2)  # 2 logits per point: class 0 (not in kernel) and class 1 (in kernel)
+            )
+        
+    def forward(self, x: Tensor|Batch):
+        out = self.initial(x)
+        out = self.sumformer(out)   # (total_nodes, embedding_dim)
+        logits = self.mlp(out)      # (total_nodes, 1)
+        
+        B = len(x.n_nodes)
+        N = x.n_nodes[0].item()
+        logits = logits.view(B, N, 2)
+        
+        return logits
+
+
+class ConvexHullNN_new(nn.Module):
+    def __init__(self, input_dim, embedding_dim, hidden_dim, output_dim, depth, n_layers, *args):
+        super().__init__()
+        self.output_dim = output_dim
+        self.initial = nn.Linear(in_features=input_dim, out_features=embedding_dim)
+        self.sumformer = Sumformer(num_blocks=depth, input_dim = embedding_dim, hidden_dim=hidden_dim)
+
+        self.mlp = MLP(embedding_dim, *[hidden_dim]*n_layers, embedding_dim, batchnorm=False, activation=nn.LeakyReLU)
+        self.final = nn.Linear(in_features=embedding_dim, out_features=output_dim * 2)
+        
+        # self.mlp = nn.Sequential(
+        #     nn.Linear(2 * output_dim, hidden_dim),
+        #     nn.LeakyReLU(),
+        #     nn.Linear(hidden_dim, hidden_dim),
+        #     nn.LeakyReLU(),
+        #     nn.Linear(hidden_dim, output_dim * 2)
+        # )
+
+    def forward(self, x: Tensor|Batch):
+
+        out = self.initial(x)
+        out = self.sumformer(out) #shape: [50 * batch_size, 16]
+        out = out.unsqueeze(0)  # Shape: [1, 50 * batch_size, 16]
+
+    
+        out = global_max_pool(x = out.data, batch = out.batch1).squeeze(dim=0) #shape: [batch_size, 2 * output_dim]
+        # out =  Batch.from_batched(out, n_nodes = n_nodes, order = 1) # switch n nodes or delete this line
+
+        
+        out = self.mlp(out)
+        out = self.final(out)
+
+        batch_len = out.data.shape[0]
+        out = out.reshape(batch_len * self.output_dim, 2) #need to update, hardcoding for 2d
+       
+        return out #return as a tensor
+
+        def get_approx_chull(self, x: Tensor|Batch):
+            return x
+
+
+class ConvexHullEncoder(nn.Module):
+    def __init__(self, input_dim, encoder_depth, encoder_width, encoder_output_dim,
+                processor_depth, processor_embedding_dim, processor_hidden_dim, processor_output_dim, **config):
+        super(ConvexHullEncoder, self).__init__()
+
+        self.encoder = MLP(input_dim, *[encoder_width]*encoder_depth, encoder_output_dim, 
+                            batchnorm=False, activation=nn.LeakyReLU)
+        self.processor = ConvexHullNN(depth=processor_depth, embedding_dim=processor_embedding_dim, 
+                                                    hidden_dim=processor_hidden_dim, input_dim=encoder_output_dim, 
+                                                    output_dim=processor_output_dim)
+
+    def forward(self, x):
+        out = self.encoder(x)
+        out = self.processor(out)
+        return out
+
+
+class EncoderProcessDecoder(nn.Module):
+    def __init__(self, input_dim, encoder_depth, encoder_width, encoder_output_dim,
+                processor_layer, processor_configs, processor_path, 
+                decoder_layer=None, decoder_configs=None, **config):
+        super(EncoderProcessDecoder, self).__init__()
+        self.processor_path = processor_path
+
+        if encoder_depth is not None:
+            self.use_encoder = True
+            self.encoder = MLP(input_dim, *[encoder_width]*encoder_depth, encoder_output_dim, 
+                                batchnorm=False, activation=nn.LeakyReLU)
+
+        else:
+            self.use_encoder = False
+
+        
+        self.processor = globals()[processor_layer](**processor_configs)
+        if processor_path is not None:
+            self.processor.load_state_dict(torch.load(processor_path, map_location = 'cpu'))
+        else:
+            print('processor unfrozen')
+        
+
+        
+        activation_mapping = {
+            'nn.LeakyReLU': nn.LeakyReLU,
+            'nn.ReLU': nn.ReLU
+        }
+
+        #accounting for inconsistently formatted yaml files in training, todo: fix
+        if isinstance(decoder_configs['activation'], str):
+            decoder_configs['activation'] = activation_mapping[decoder_configs['activation']]
+        
+
+        self.decoder = globals()[decoder_layer](**decoder_configs)
+
+    def forward(self, x: Tensor | Batch):
+        if self.use_encoder:
+            out = self.encoder(x)  # Pass input through the encoder
+            encoded_pts = out # storing encoded points before processor
+            # start_time = time.perf_counter()
+       
+            out = self.processor(out) #shape: [ptset_size * batch_size, od]
+            # print(f'processor time: {time.perf_counter() - start_time}')
+
+
+            out = Batch.from_list(self.processor.get_approx_chull(out, encoded_pts), order = 1) #shape: [od * batch_size, input_dim]
+
+
+        else:
+            out = self.processor(x) #shape: [ptset_size * batch_size, od]
+            out = Batch.from_list(self.processor.get_approx_chull(out, x), order = 1)
+
+        out = self.decoder(out)
+        return out
+
+class ShapeFittingBaseline(EncoderProcessDecoder):
+    def forward(self, x: Tensor | Batch):
+        out = self.encoder(x)
+        encoded_pts = out
+        out = self.processor(out)
+        out = self.decoder(out)
+        return out
+
+
+class ShapeFittingDirect(nn.Module):
+    def __init__(self, input_dim, embedding_dim, hidden_dim, output_dim, depth, aggregation="mean", *args):
+        super().__init__()
+        self.initial = nn.Linear(in_features=input_dim, out_features=embedding_dim)
+        self.sumformer = Sumformer(num_blocks=depth, input_dim = embedding_dim, hidden_dim=hidden_dim, 
+                                    aggregation=aggregation)
+        self.mlp = nn.Sequential(
+            nn.Linear(embedding_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, output_dim)
+        )
+        self.output_dim = output_dim
+        self.input_dim = input_dim
+
+    def forward(self, x: Tensor|Batch):
+        # print(type(x))
+        out = self.initial(x)
+        out = self.sumformer(out)
+
+        # n_nodes_out = torch.full_like(x.n_nodes, fill_value = self.output_dim)
+
+        out = global_max_pool(x = out.data, batch = x.batch1).squeeze(dim=0) ##pooling setwise
+        # out =  Batch.from_batched(out, n_nodes = n_nodes_out, order = 1)
+        # print(type(out))
+
+        out = self.mlp(out)
+
+        return out
+
+
+class MultiTaskEncoderProcessDecoder(nn.Module):
+    def __init__(self,  input_dim, encoder_depth, encoder_width, encoder_output_dim, processor_layer, processor_configs, 
+                 processor_path, task_configs,  # dict: task_name -> decoder_layer + decoder_configs
+                 **kwargs):
+        super().__init__()
+
+        self.processor_path = processor_path
+
+        # Shared encoder
+        self.encoder = MLP(
+            input_dim, 
+            *[encoder_width] * encoder_depth, 
+            encoder_output_dim,
+            batchnorm=False, 
+            activation=nn.LeakyReLU
+        )
+
+        # Shared processor
+        self.processor = globals()[processor_layer](**processor_configs)
+        if processor_path is not None:
+            print(f'Loading processor weights from {processor_path}')
+            self.processor.load_state_dict(torch.load(processor_path, map_location='cpu'))
+            for param in self.processor.parameters():
+                param.requires_grad = False
+        else:
+            print('Processor is unfrozen')
+
+        # Map activation strings to actual PyTorch classes
+        activation_mapping = {
+            'nn.LeakyReLU': nn.LeakyReLU,
+            'nn.ReLU': nn.ReLU
+        }
+
+        # Task-specific decoders
+        self.decoders = nn.ModuleDict()
+        for task_name, cfg in task_configs.items():
+            decoder_layer = cfg['decoder_layer']
+            decoder_configs = cfg['decoder_configs']
+
+            # Fix string activation if needed
+            if isinstance(decoder_configs.get('activation'), str):
+                decoder_configs['activation'] = activation_mapping[decoder_configs['activation']]
+
+            self.decoders[task_name] = globals()[decoder_layer](**decoder_configs)
+
+    def forward(self, x: Tensor | Batch, task: str):
+        out = self.encoder(x)  # Shared encoder
+        encoded_pts = out
+
+        out = self.processor(out)  # Shared processor
+        out = Batch.from_list(self.processor.get_approx_chull(out, encoded_pts), order=1)
+
+        # Task-specific decoder
+        return self.decoders[task](out)    
