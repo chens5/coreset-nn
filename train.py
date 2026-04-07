@@ -159,7 +159,6 @@ def cross_entropy_loss():
     return 0
 
 def compute_test_error(model, directions, test_dataloader, test_gt, test_sz, device='cuda:0'):
-    return None
     try:
         count = 0
         loss = 0
@@ -216,6 +215,7 @@ def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_g
 
     # Initialize model
     model = globals()[modeltype](**config)
+    print(model)
     model.to(device)
 
     # Initialize optimizer
@@ -245,7 +245,7 @@ def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_g
     y_tensor = torch.tensor(y)
     directions = torch.stack([x_tensor, y_tensor], dim=1)
     directions = directions.t().float().to(device)
-    directions = None #uncomment for d>2
+    #directions = None #uncomment for d>2
 
     for epoch in trange(epochs):
         count = 0
@@ -309,6 +309,21 @@ def train(modeltype, config, train_dataloader, train_gt, test_dataloader, test_g
         if epoch % save_freq == 0:
             path = os.path.join(record_dir, f'model_{epoch}.pt')
             torch.save(model.state_dict(), path)
+
+            #saving output
+            # gen_model_output(model, train_dataloader, test_dataloader, log_dir, epoch, device)
+
+            # hulls = [tensor.cpu().detach().numpy() for tensor in get_approx_chull(out, batch)]
+            # print(np.array(hulls))
+            
+            # model_output_dir = os.path.join(log_dir, 'output')
+            # if not os.path.exists(model_output_dir):
+            #     os.makedirs(model_output_dir)
+            # np.save(os.path.join(model_output_dir, f'chull_test_e{epoch}'), np.array(hulls))
+            # print('output saved')
+            # hulls = [torch.tensor(arr) for arr in hulls]
+            # hulls = Batch.from_list(hulls, order = 1) #casting back to batch
+    
     
     
     path = os.path.join(log_dir, 'final_model.pt')
