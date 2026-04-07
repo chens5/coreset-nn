@@ -1,0 +1,19 @@
+depth-3-heads-4-ed-16-hd-128-tod-32-od4:
+  depth: 3
+  num_heads: 4
+  embedding_dim: 16
+  hidden_dim: 128
+  input_dim: 3
+  transformer_output_dim: 32
+  output_dim: 4
+  return_attn: False
+
+# depth-4-heads-4-ed-16-hd-128-tod-32-od4:
+#   depth: 4
+#   num_heads: 4
+#   embedding_dim: 16
+#   hidden_dim: 128
+#   input_dim: 3
+#   transformer_output_dim: 32
+#   output_dim: 4
+#   return_attn: False

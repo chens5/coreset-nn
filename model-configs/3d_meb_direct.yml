@@ -1,0 +1,14 @@
+
+depth-3-ed-16-hd-128-od-4:
+  depth: 3
+  embedding_dim: 16
+  hidden_dim: 128
+  input_dim: 3
+  output_dim: 4
+
+# depth-4-ed-16-hd-128-od-4:
+#   depth: 4
+#   embedding_dim: 16
+#   hidden_dim: 128
+#   input_dim: 3
+#   output_dim: 4

@@ -1,0 +1,31 @@
+##2d transformer model (not direct)
+
+depth-3-heads-4-ed-32-hd-128-tod-32-od16:
+  depth: 3
+  num_heads: 4
+  embedding_dim: 32
+  hidden_dim: 128
+  input_dim: 2
+  transformer_output_dim: 32
+  output_dim: 16
+  return_attn: False
+
+depth-3-heads-4-ed-32-hd-128-tod-32-od32:
+  depth: 3
+  num_heads: 4
+  embedding_dim: 32
+  hidden_dim: 128
+  input_dim: 2
+  transformer_output_dim: 32
+  output_dim: 32
+  return_attn: False
+
+depth-3-heads-4-ed-32-hd-128-tod-32-od64:
+  depth: 3
+  num_heads: 4
+  embedding_dim: 32
+  hidden_dim: 128
+  input_dim: 2
+  transformer_output_dim: 32
+  output_dim: 64
+  return_attn: False

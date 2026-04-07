@@ -1,0 +1,31 @@
+
+#overparameterized
+
+depth-3-ed-64-hd-512-od-16:
+  depth: 3
+  embedding_dim: 64
+  hidden_dim: 512
+  input_dim: 3
+  output_dim: 16
+
+### od=32 excluded from direct models ###
+# depth-3-ed-64-hd-512-od-32:
+#   depth: 3
+#   embedding_dim: 64
+#   hidden_dim: 512
+#   input_dim: 3
+#   output_dim: 32
+
+depth-3-ed-64-hd-512-od-200:
+  depth: 3
+  embedding_dim: 64
+  hidden_dim: 512
+  input_dim: 3
+  output_dim: 200
+
+depth-3-ed-64-hd-512-od-64:
+  depth: 3
+  embedding_dim: 64
+  hidden_dim: 512
+  input_dim: 3
+  output_dim: 64

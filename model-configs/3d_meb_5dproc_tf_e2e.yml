@@ -1,0 +1,63 @@
+
+
+
+? sum5d_encoder_depth3_hd128_od64_proc_depth3_heads4_ed64_hd512_tod16_od150_decode_ed32_mlp128_mlpout16_mlplayers3_phi256_phiout4_philayers3
+: decoder_configs:
+    activation: nn.LeakyReLU
+    batchnorm: false
+    embed_dim: 32
+    input_dim: 5
+    mean: false
+    mlp_hdim: 128
+    mlp_layers: 3
+    mlp_out_dim: 256
+    phi_hdim: 256
+    phi_layers: 3
+    phi_out_dim: 4
+    use_max: false
+  decoder_layer: PointEncoder
+  encoder_depth: 3
+  encoder_layer: MLP
+  encoder_output_dim: 5
+  encoder_width: 128
+  input_dim: 3
+  processor_configs:
+    depth: 3
+    num_heads: 4
+    embedding_dim: 64
+    hidden_dim: 512
+    input_dim: 5
+    transformer_output_dim: 16
+    output_dim: 150
+  processor_layer: ConvexHullNNTransformer
+  processor_path: null
+# ? sum5d_encoder_depth3_hd256_od64_proc_depth3_heads4_ed64_hd512_tod16_od150_decode_ed32_mlp256_mlpout16_mlplayers3_phi256_phiout4_philayers3
+# : decoder_configs:
+#     activation: nn.LeakyReLU
+#     batchnorm: false
+#     embed_dim: 32
+#     input_dim: 5
+#     mean: false
+#     mlp_hdim: 256
+#     mlp_layers: 3
+#     mlp_out_dim: 256
+#     phi_hdim: 256
+#     phi_layers: 3
+#     phi_out_dim: 4
+#     use_max: false
+#   decoder_layer: PointEncoder
+#   encoder_depth: 3
+#   encoder_layer: MLP
+#   encoder_output_dim: 5
+#   encoder_width: 256
+#   input_dim: 3
+#   processor_configs:
+#     depth: 3
+#     num_heads: 4
+#     embedding_dim: 64
+#     hidden_dim: 512
+#     input_dim: 5
+#     transformer_output_dim: 16
+#     output_dim: 150
+#   processor_layer: ConvexHullNNTransformer
+#   processor_path: null

@@ -1,0 +1,155 @@
+
+
+
+? sum5d_encoder_depth2_hd128_od64_proc_depth3_heads4_ed64_hd512_tod16_od150_decode_ed32_mlp128_mlpout16_mlplayers2_phi256_phiout3_philayers2
+: decoder_configs:
+    activation: nn.LeakyReLU
+    batchnorm: false
+    embed_dim: 32
+    input_dim: 5
+    mean: false
+    mlp_hdim: 128
+    mlp_layers: 2
+    mlp_out_dim: 256
+    phi_hdim: 256
+    phi_layers: 2
+    phi_out_dim: 3
+    use_max: false
+  decoder_layer: PointEncoder
+  encoder_depth: 2
+  encoder_layer: MLP
+  encoder_output_dim: 5
+  encoder_width: 128
+  input_dim: 2
+  processor_configs:
+    depth: 3
+    num_heads: 4
+    embedding_dim: 64
+    hidden_dim: 512
+    input_dim: 5
+    transformer_output_dim: 16
+    output_dim: 150
+  processor_layer: ConvexHullNNTransformer
+  processor_path: /data/oren/coreset/models/elliptical-50/ConvexHullNNTransformer/direction/depth-3-heads-4-ed-64-hd-512-tod-16-od-150/transformer_5d_uniform500/final_model.pt
+
+? sum5d_encoder_depth2_hd128_od64_proc_depth3_ed64_hd512_od150_decode_ed32_mlp128_mlpout16_mlplayers2_phi64_phiout3_philayers4
+: decoder_configs:
+    activation: nn.LeakyReLU
+    batchnorm: false
+    embed_dim: 32
+    input_dim: 5
+    mean: false
+    mlp_hdim: 128
+    mlp_layers: 2
+    mlp_out_dim: 64
+    phi_hdim: 64
+    phi_layers: 4
+    phi_out_dim: 3
+    use_max: false
+  decoder_layer: PointEncoder
+  encoder_depth: 2
+  encoder_layer: MLP
+  encoder_output_dim: 5
+  encoder_width: 128
+  input_dim: 2
+  processor_configs:
+    depth: 3
+    num_heads: 4
+    embedding_dim: 64
+    hidden_dim: 512
+    input_dim: 5
+    transformer_output_dim: 16
+    output_dim: 150
+  processor_layer: ConvexHullNNTransformer
+  processor_path: /data/oren/coreset/models/elliptical-50/ConvexHullNNTransformer/direction/depth-3-heads-4-ed-64-hd-512-tod-16-od-150/transformer_5d_uniform500/final_model.pt
+? sum5d_encoder_depth2_hd256_od64_proc_depth3_heads4_ed64_hd512_tod16_od150_decode_ed32_mlp256_mlpout16_mlplayers2_phi128_phiout3_philayers2
+: decoder_configs:
+    activation: nn.LeakyReLU
+    batchnorm: false
+    embed_dim: 32
+    input_dim: 5
+    mean: false
+    mlp_hdim: 256
+    mlp_layers: 2
+    mlp_out_dim: 128
+    phi_hdim: 128
+    phi_layers: 2
+    phi_out_dim: 3
+    use_max: false
+  decoder_layer: PointEncoder
+  encoder_depth: 2
+  encoder_layer: MLP
+  encoder_output_dim: 5
+  encoder_width: 256
+  input_dim: 2
+  processor_configs:
+    depth: 3
+    num_heads: 4
+    embedding_dim: 64
+    hidden_dim: 512
+    input_dim: 5
+    transformer_output_dim: 16
+    output_dim: 150
+  processor_layer: ConvexHullNNTransformer
+  processor_path: /data/oren/coreset/models/elliptical-50/ConvexHullNNTransformer/direction/depth-3-heads-4-ed-64-hd-512-tod-16-od-150/transformer_5d_uniform500/final_model.pt
+? sum5d_encoder_depth2_hd64_od64_proc_depth3_heads4_ed64_hd512_tod16_od150_decode_ed32_mlp64_mlpout16_mlplayers2_phi128_phiout3_philayers3
+: decoder_configs:
+    activation: nn.LeakyReLU
+    batchnorm: false
+    embed_dim: 32
+    input_dim: 5
+    mean: false
+    mlp_hdim: 64
+    mlp_layers: 2
+    mlp_out_dim: 128
+    phi_hdim: 128
+    phi_layers: 3
+    phi_out_dim: 3
+    use_max: false
+  decoder_layer: PointEncoder
+  encoder_depth: 2
+  encoder_layer: MLP
+  encoder_output_dim: 5
+  encoder_width: 64
+  input_dim: 2
+  processor_configs:
+    depth: 3
+    num_heads: 4
+    embedding_dim: 64
+    hidden_dim: 512
+    input_dim: 5
+    transformer_output_dim: 16
+    output_dim: 150
+  processor_layer: ConvexHullNNTransformer
+  processor_path: /data/oren/coreset/models/elliptical-50/ConvexHullNNTransformer/direction/depth-3-heads-4-ed-64-hd-512-tod-16-od-150/transformer_5d_uniform500/final_model.pt
+? sum5d_encoder_depth2_hd64_od64_proc_depth3_heads4_ed64_hd512_tod16_od150_decode_ed32_mlp64_mlpout16_mlplayers2_phi64_phiout3_philayers2
+:
+  decoder_configs:
+    activation: nn.LeakyReLU
+    batchnorm: false
+    embed_dim: 32
+    input_dim: 5
+    mean: false
+    mlp_hdim: 64
+    mlp_layers: 2
+    mlp_out_dim: 64
+    phi_hdim: 64
+    phi_layers: 2
+    phi_out_dim: 3
+    use_max: false
+  decoder_layer: PointEncoder
+  encoder_depth: 2
+  encoder_layer: MLP
+  encoder_output_dim: 5
+  encoder_width: 64
+  input_dim: 2
+  processor_configs:
+    depth: 3
+    num_heads: 4
+    embedding_dim: 64
+    hidden_dim: 512
+    input_dim: 5
+    transformer_output_dim: 16
+    output_dim: 150
+  processor_layer: ConvexHullNNTransformer
+  processor_path: /data/oren/coreset/models/elliptical-50/ConvexHullNNTransformer/direction/depth-3-heads-4-ed-64-hd-512-tod-16-od-150/transformer_5d_uniform500/final_model.pt
