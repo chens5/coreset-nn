@@ -1,0 +1,35 @@
+depth-3-heads-4-ed-64-hd-512-tod-16-od-150:
+  depth: 3
+  num_heads: 4
+  embedding_dim: 64
+  hidden_dim: 512
+  input_dim: 5
+  transformer_output_dim: 16
+  output_dim: 150
+
+depth-3-heads-4-ed-64-hd-512-tod-16-od-64:
+  depth: 3
+  num_heads: 4
+  embedding_dim: 64
+  hidden_dim: 512
+  input_dim: 5
+  transformer_output_dim: 16
+  output_dim: 64
+
+depth-3-heads-4-ed-64-hd-512-tod-16-od-100:
+  depth: 3
+  num_heads: 4
+  embedding_dim: 64
+  hidden_dim: 512
+  input_dim: 5
+  transformer_output_dim: 16
+  output_dim: 100
+
+depth-3-heads-4-ed-64-hd-512-tod-16-od-200:
+  depth: 3
+  num_heads: 4
+  embedding_dim: 64
+  hidden_dim: 512
+  input_dim: 5
+  transformer_output_dim: 16
+  output_dim: 200
