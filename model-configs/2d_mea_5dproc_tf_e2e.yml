@@ -1,0 +1,31 @@
+
+? sum5d_encoder_depth2_hd64_od64_proc_depth3_heads4_ed64_hd512_tod16_od150_decode_ed32_mlp64_mlpout16_mlplayers2_phi128_phiout2_philayers3
+: decoder_configs:
+    activation: nn.LeakyReLU
+    batchnorm: false
+    embed_dim: 32
+    input_dim: 5
+    mean: false
+    mlp_hdim: 64
+    mlp_layers: 2
+    mlp_out_dim: 128
+    phi_hdim: 128
+    phi_layers: 3
+    phi_out_dim: 2
+    use_max: false
+  decoder_layer: PointEncoder
+  encoder_depth: 2
+  encoder_layer: MLP
+  encoder_output_dim: 5
+  encoder_width: 64
+  input_dim: 2
+  processor_configs:
+    depth: 3
+    num_heads: 4
+    embedding_dim: 64
+    hidden_dim: 512
+    input_dim: 5
+    transformer_output_dim: 16
+    output_dim: 150
+  processor_layer: ConvexHullNNTransformer
+  processor_path: null
